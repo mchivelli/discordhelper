@@ -105,17 +105,48 @@ npm start
 npm run dev
 ```
 
-### Docker Deployment
+### Docker Deployment (Production Ready)
+
+The project includes a production-ready Docker setup with automatic health checks, database migrations, and AI integration testing at startup.
 
 ```bash
-# Build and start containers
+# Set up your environment variables first
+cp .env.example .env
+nano .env  # Add your DISCORD_TOKEN and OPENROUTER_API_KEY
+
+# Build and start containers in production mode
 docker-compose up -d
 
 # View logs
 docker-compose logs -f
 
+# Check container health status
+docker-compose ps
+
 # Stop containers
 docker-compose down
+```
+
+### AI Integration
+
+This bot uses OpenRouter API for AI-enhanced features. To ensure proper AI functionality:
+
+1. Get an API key from [OpenRouter.ai](https://openrouter.ai/)
+2. Add the API key to your `.env` file as `OPENROUTER_API_KEY`
+3. Choose a model (default is `openai/gpt-3.5-turbo`)
+
+At startup, the bot will automatically:
+- Test the AI connection
+- Fall back to basic functionality if AI is unavailable
+- Report the AI status in the logs
+
+You can manually check AI status with:
+```bash
+# For Docker deployments
+docker-compose exec bot node -e "require('./src/utils/ai').checkAIStatus().then(console.log)"
+
+# For local deployments
+node -e "require('./src/utils/ai').checkAIStatus().then(console.log)"
 ```
 
 ## Bot Commands

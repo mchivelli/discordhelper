@@ -22,7 +22,12 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  description TEXT,
+  deadline TEXT,
+  completion_percentage INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  guild_id TEXT,
+  creator_id TEXT
 );
 CREATE TABLE IF NOT EXISTS stages (
   task_id TEXT NOT NULL,
@@ -32,9 +37,25 @@ CREATE TABLE IF NOT EXISTS stages (
   assignee TEXT,
   done INTEGER DEFAULT 0,
   created_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  completion_notes TEXT,
   due_date INTEGER,
   PRIMARY KEY(task_id, idx),
   FOREIGN KEY(task_id) REFERENCES tasks(id)
+);
+
+CREATE TABLE IF NOT EXISTS task_suggestions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  stage_suggestions TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  status TEXT DEFAULT 'pending',
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS bot_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS announcements (
   id TEXT PRIMARY KEY,

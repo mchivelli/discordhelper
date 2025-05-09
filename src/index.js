@@ -137,6 +137,50 @@ client.on(Events.ClientReady, () => {
 // Initialize announcements array
 client.announcements = [];
 
+// Initialize temporary storage for AI-generated stage suggestions
+client.stageSuggestions = new Map();
+
+// Add a basic health check server for Docker
+if (process.env.NODE_ENV === 'production') {
+  const http = require('http');
+  const HEALTH_PORT = process.env.HEALTH_PORT || 3000;
+  
+  const server = http.createServer((req, res) => {
+    if (req.url === '/health') {
+      const isReady = client && client.isReady();
+      if (isReady) {
+        res.writeHead(200);
+        res.end(JSON.stringify({ 
+          status: 'healthy', 
+          uptime: process.uptime(),
+          ready: true,
+          timestamp: new Date().toISOString()
+        }));
+      } else {
+        res.writeHead(503);
+        res.end(JSON.stringify({ status: 'unhealthy', ready: false }));
+      }
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+  
+  server.listen(HEALTH_PORT, () => {
+    console.log(`Health check server running on port ${HEALTH_PORT}`);
+  });
+  
+  // Graceful shutdown handling
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received, shutting down gracefully');
+    server.close(() => {
+      console.log('HTTP server closed');
+      client.destroy();
+      process.exit(0);
+    });
+  });
+}
+
 client.on(Events.InteractionCreate, async interaction => {
   try {
     // Implement rate limiting
@@ -160,6 +204,178 @@ client.on(Events.InteractionCreate, async interaction => {
     // Handle modal submissions
     if (interaction.isModalSubmit()) {
       const customId = interaction.customId;
+      
+      // Handle task suggestion modifications
+      if (customId.startsWith('modify_suggestions_')) {
+        try {
+          const parts = customId.split('_');
+          const taskId = parts[2];
+          const suggestionId = parts[3];
+          
+          // Get the original suggestions
+          const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+          if (!suggestion) {
+            return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
+          }
+          
+          const suggestedStages = JSON.parse(suggestion.stage_suggestions);
+          const modifiedStages = [];
+          
+          // Process each modified stage from the form
+          for (let i = 0; i < Math.min(suggestedStages.length, 5); i++) {
+            try {
+              const stageInput = interaction.fields.getTextInputValue(`stage_${i}`);
+              
+              // Parse the input: first part is the name, rest is description
+              const colonIndex = stageInput.indexOf(':');
+              if (colonIndex > 0) {
+                const name = stageInput.substring(0, colonIndex).trim();
+                const description = stageInput.substring(colonIndex + 1).trim();
+                modifiedStages.push({ name, description });
+              } else {
+                // If no colon, treat whole input as name
+                modifiedStages.push({ name: stageInput.trim(), description: '' });
+              }
+            } catch (error) {
+              logger.error(`Error parsing stage ${i}:`, error);
+              // Skip this stage if parsing fails
+            }
+          }
+          
+          // Add each modified stage to the task
+          await interaction.deferReply();
+          
+          for (let i = 0; i < modifiedStages.length; i++) {
+            const stage = modifiedStages[i];
+            const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId).c;
+            db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)')
+              .run(taskId, idx, stage.name, stage.description, Date.now());
+          }
+          
+          // Update suggestion status
+          db.prepare('UPDATE task_suggestions SET status = ? WHERE rowid = ?').run('modified', suggestionId);
+          
+          // Get task details for the response
+          const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);
+          
+          // Send confirmation message
+          return interaction.editReply({ 
+            content: `✅ Added ${modifiedStages.length} modified stages to task \`${taskId}\`: **${task.name}**.
+View with \`/task list id:${taskId}\`.`
+          });
+        } catch (error) {
+          logger.error('Error processing modified stages:', error);
+          return interaction.reply({ 
+            content: `An error occurred: ${error.message}`, 
+            ephemeral: true 
+          });
+        }
+      }
+      
+      // Handle completion notes submission
+      else if (customId.startsWith('complete_notes_')) {
+        try {
+          const parts = customId.split('_');
+          const taskId = parts[2];
+          const stageIdx = parts[3];
+          const completionNotes = interaction.fields.getTextInputValue('completion_notes');
+          const enhanceWithAi = interaction.fields.getTextInputValue('enhance_with_ai')?.toLowerCase?.();
+          const useAi = enhanceWithAi === 'yes' || enhanceWithAi === 'true' || enhanceWithAi === 'y';
+          
+          // Get details about the stage
+          const stage = db.prepare('SELECT name FROM stages WHERE task_id = ? AND idx = ?').get(taskId, parseInt(stageIdx));
+          if (!stage) {
+            return interaction.reply({ content: 'Stage not found.', ephemeral: true });
+          }
+          
+          await interaction.deferReply();
+          
+          // Process notes with AI if requested
+          let processedNotes = completionNotes;
+          if (useAi) {
+            try {
+              const { enhanceTaskNote } = require('./utils/ai');
+              processedNotes = await enhanceTaskNote(completionNotes, stage.name);
+            } catch (error) {
+              logger.error('Error enhancing completion notes:', error);
+              // Continue with original notes if AI enhancement fails
+            }
+          }
+          
+          // Mark the stage as complete with notes
+          db.prepare(
+            'UPDATE stages SET done = 1, completed_at = ?, completion_notes = ? WHERE task_id = ? AND idx = ?'
+          ).run(Date.now(), processedNotes, taskId, parseInt(stageIdx));
+          
+          // Calculate new completion percentage
+          const totalStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(taskId).count;
+          const completedStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(taskId).count;
+          const completionPercentage = Math.round((completedStages / totalStages) * 100);
+          
+          // Update task completion percentage
+          db.prepare('UPDATE tasks SET completion_percentage = ? WHERE id = ?').run(completionPercentage, taskId);
+          
+          // Get the next stage (if any)
+          const nextStage = db.prepare('SELECT * FROM stages WHERE task_id = ? AND done = 0 ORDER BY idx').get(taskId);
+          
+          // Create response embed
+          const embed = new EmbedBuilder()
+            .setTitle(`Task Progress Update: [${completionPercentage}%]`)
+            .setColor(0x4caf50)
+            .addFields({ 
+              name: `✅ Completed: ${stage.name}`, 
+              value: processedNotes || 'No completion notes provided'
+            })
+            .setFooter({ text: `Task ID: ${taskId}` });
+          
+          // Add next stage info if available
+          if (nextStage) {
+            // Get prerequisites for the next stage
+            const { getPrereqs } = require('./utils/ai');
+            const prereq = await getPrereqs(`Task ${taskId}`, nextStage.name, nextStage.desc);
+            
+            embed.addFields({ 
+              name: `⏭️ Next Stage: ${nextStage.name}`, 
+              value: nextStage.desc || 'No description provided'
+            });
+            
+            embed.addFields({ 
+              name: '📋 Prerequisites', 
+              value: prereq
+            });
+            
+            // Create advance button for next stage
+            const advanceRow = new ActionRowBuilder()
+              .addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`advance_simple_${taskId}_${nextStage.idx}`)
+                  .setLabel('Mark Complete')
+                  .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                  .setCustomId(`advance_notes_${taskId}_${nextStage.idx}`)
+                  .setLabel('Add Completion Notes')
+                  .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                  .setCustomId(`view_task_${taskId}`)
+                  .setLabel('View Task')
+                  .setStyle(ButtonStyle.Secondary)
+              );
+            
+            return interaction.editReply({ embeds: [embed], components: [advanceRow] });
+          } else {
+            // All stages completed
+            embed.setDescription('🎉 All stages completed!');
+            return interaction.editReply({ embeds: [embed] });
+          }
+        } catch (error) {
+          logger.error('Error processing completion notes:', error);
+          return interaction.reply({ 
+            content: `An error occurred: ${error.message}`, 
+            ephemeral: true 
+          });
+        }
+      }
+
       
       if (customId.startsWith('edit_modal_')) {
         const draftId = customId.replace('edit_modal_', '');
@@ -252,9 +468,252 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // Handle button interactions
     if (interaction.isButton()) {
-      const [action, id] = interaction.customId.split('_');
+      const customIdParts = interaction.customId.split('_');
+      const buttonAction = customIdParts[0];
       
-      if (action === 'advance') {
+      // Handle task-related buttons
+      if (['accept', 'modify', 'skip', 'advance', 'view'].includes(buttonAction)) {
+        const taskAction = customIdParts[0];
+        const taskId = customIdParts[1];
+        
+        // Handle AI-generated stage suggestions
+        if (taskAction === 'accept') {
+          try {
+            const suggestionId = customIdParts[2];
+            
+            // Get the suggested stages from the database
+            const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+            if (!suggestion) {
+              return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
+            }
+            
+            const suggestedStages = JSON.parse(suggestion.stage_suggestions);
+            
+            // Add each suggested stage to the task
+            await interaction.deferReply();
+            
+            for (let i = 0; i < suggestedStages.length; i++) {
+              const stage = suggestedStages[i];
+              const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId).c;
+              db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)')
+                .run(taskId, idx, stage.name, stage.description || '', Date.now());
+            }
+            
+            // Update suggestion status
+            db.prepare('UPDATE task_suggestions SET status = ? WHERE rowid = ?').run('accepted', suggestionId);
+            
+            // Get task details for the response
+            const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);
+            
+            // Send confirmation message
+            return interaction.editReply({ 
+              content: `✅ Added ${suggestedStages.length} AI-suggested stages to task \`${taskId}\`: **${task.name}**.
+View with \`/task list id:${taskId}\`.`,
+              components: [] 
+            });
+          } catch (error) {
+            logger.error('Error accepting AI-suggested stages:', error);
+            return interaction.reply({ 
+              content: `An error occurred while adding stages: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
+        }
+        
+        // Handle modify stages request
+        else if (taskAction === 'modify') {
+          try {
+            const suggestionId = customIdParts[2];
+            
+            // Get the suggested stages from the database
+            const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+            if (!suggestion) {
+              return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
+            }
+            
+            const suggestedStages = JSON.parse(suggestion.stage_suggestions);
+            
+            // Create a modal for modifying the stages
+            const modal = new ModalBuilder()
+              .setCustomId(`modify_suggestions_${taskId}_${suggestionId}`)
+              .setTitle('Modify Suggested Stages');
+              
+            // Add text inputs for each stage (max 5)
+            for (let i = 0; i < Math.min(suggestedStages.length, 5); i++) {
+              const stage = suggestedStages[i];
+              const stageInput = new TextInputBuilder()
+                .setCustomId(`stage_${i}`)
+                .setLabel(`Stage ${i+1}: ${stage.name}`)
+                .setValue(`${stage.name}: ${stage.description || ''}`)
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setMaxLength(300);
+                
+              modal.addComponents(new ActionRowBuilder().addComponents(stageInput));
+            }
+            
+            // Show the modal to the user
+            return interaction.showModal(modal);
+          } catch (error) {
+            logger.error('Error showing stage modification modal:', error);
+            return interaction.reply({ 
+              content: `An error occurred: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
+        }
+        
+        // Handle skip AI stages
+        else if (taskAction === 'skip') {
+          try {
+            const suggestionId = customIdParts[2];
+            
+            // Update suggestion status
+            db.prepare('UPDATE task_suggestions SET status = ? WHERE rowid = ?').run('skipped', suggestionId);
+            
+            // Get task details for the response
+            const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);
+            
+            return interaction.update({ 
+              content: `Skipped AI-suggested stages for task \`${taskId}\`: **${task.name}**.
+Add stages manually with \`/task add-stage\`.`,
+              embeds: [],
+              components: [] 
+            });
+          } catch (error) {
+            logger.error('Error skipping AI stages:', error);
+            return interaction.reply({ 
+              content: `An error occurred: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
+        }
+        
+        // Handle advance with notes
+        else if (taskAction === 'advance' && customIdParts[2] === 'notes') {
+          try {
+            const stageIdx = parseInt(customIdParts[3]);
+            
+            // Get stage details
+            const stage = db.prepare('SELECT name FROM stages WHERE task_id = ? AND idx = ?').get(taskId, stageIdx);
+            if (!stage) {
+              return interaction.reply({ content: 'Stage not found.', ephemeral: true });
+            }
+            
+            // Create a modal for completion notes
+            const modal = new ModalBuilder()
+              .setCustomId(`complete_notes_${taskId}_${stageIdx}`)
+              .setTitle(`Complete Stage: ${stage.name}`)
+              .addComponents(
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId('completion_notes')
+                    .setLabel('Completion Notes')
+                    .setPlaceholder('Describe what was accomplished in this stage...')
+                    .setStyle(TextInputStyle.Paragraph)
+                    .setRequired(true)
+                    .setMaxLength(1000)
+                ),
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId('enhance_with_ai')
+                    .setLabel('Enhance with AI? (type yes or no)')
+                    .setPlaceholder('yes')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(false)
+                )
+              );
+            
+            // Show the modal to the user
+            return interaction.showModal(modal);
+          } catch (error) {
+            logger.error('Error showing completion notes modal:', error);
+            return interaction.reply({ 
+              content: `An error occurred: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
+        }
+        
+        // Handle simple advance (without notes)
+        else if (taskAction === 'advance' && customIdParts[2] === 'simple') {
+          try {
+            const stageIdx = parseInt(customIdParts[3]);
+            
+            // Mark the current stage as complete
+            db.prepare(
+              'UPDATE stages SET done = 1, completed_at = ? WHERE task_id = ? AND idx = ?'
+            ).run(Date.now(), taskId, stageIdx);
+            
+            // Calculate new completion percentage
+            const totalStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(taskId).count;
+            const completedStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(taskId).count;
+            const completionPercentage = Math.round((completedStages / totalStages) * 100);
+            
+            // Update task completion percentage
+            db.prepare('UPDATE tasks SET completion_percentage = ? WHERE id = ?').run(completionPercentage, taskId);
+            
+            // Get details of the completed stage
+            const completedStage = db.prepare('SELECT name FROM stages WHERE task_id = ? AND idx = ?').get(taskId, stageIdx);
+            
+            // Get the next stage (if any)
+            const nextStage = db.prepare('SELECT * FROM stages WHERE task_id = ? AND done = 0 ORDER BY idx').get(taskId);
+            
+            // Create response
+            const content = nextStage ?
+              `✅ Completed stage **${completedStage.name}**. Next up: **${nextStage.name}**` :
+              `🎉 Completed stage **${completedStage.name}**. All stages complete!`;
+            
+            // Send a temporary response
+            return interaction.update({ 
+              content,
+              components: [] 
+            });
+          } catch (error) {
+            logger.error('Error advancing stage:', error);
+            return interaction.reply({ 
+              content: `An error occurred: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
+        }
+        
+        // Handle view task
+        else if (taskAction === 'view') {
+          const command = client.commands.get('task');
+          if (command) {
+            // Create a synthetic interaction to pass to the task list command
+            const syntheticInteraction = {
+              options: {
+                getSubcommand: () => 'list',
+                getString: (name) => name === 'id' ? taskId : null
+              },
+              reply: interaction.reply.bind(interaction),
+              deferReply: interaction.deferReply.bind(interaction),
+              editReply: interaction.editReply.bind(interaction),
+              user: interaction.user,
+              guildId: interaction.guildId
+            };
+            
+            try {
+              // Execute the task list command
+              await command.execute(syntheticInteraction);
+            } catch (error) {
+              logger.error('Error viewing task:', error);
+              return interaction.reply({ 
+                content: `An error occurred: ${error.message}`, 
+                ephemeral: true 
+              });
+            }
+          }
+          return;
+        }
+      }
+      
+      // Handle original button interactions
+      const [oldAction, id] = interaction.customId.split('_');
+      
+      if (oldAction === 'advance') {
         // Get the next stage
         const next = db.prepare('SELECT * FROM stages WHERE task_id=? AND done=0 ORDER BY idx').get(id);
         if (!next) {
@@ -297,7 +756,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       
       // Handle announcement buttons
-      if (action === 'post') {
+      else if (oldAction === 'post') {
         // Verify user has permission to post announcements
         if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
           await interaction.reply({ 
@@ -347,7 +806,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
       
-      if (action === 'edit') {
+      else if (oldAction === 'edit') {
         // Find the draft announcement in the database
         const draft = db.prepare(
           'SELECT * FROM announcements WHERE id = ? AND author_id = ? AND posted = 0'
@@ -379,7 +838,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
       
-      if (action === 'discard') {
+      else if (oldAction === 'discard') {
         // Check if the draft exists and delete it from the database
         const result = db.prepare(
           'DELETE FROM announcements WHERE id = ? AND author_id = ? AND posted = 0'
@@ -399,7 +858,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       
       // Handle changelog post button
-      if (action === 'post_changelog') {
+      else if (oldAction === 'post_changelog') {
         try {
           // Verify user permissions
           if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
@@ -428,7 +887,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       
       // Handle changelog discard button
-      if (action === 'discard_changelog') {
+      else if (oldAction === 'discard_changelog') {
         try {
           // Verify user permissions
           if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
@@ -468,7 +927,7 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       
       // Handle create patch announcement button
-      if (action === 'create_patch') {
+      else if (oldAction === 'create_patch') {
         try {
           // Verify user permissions
           if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
