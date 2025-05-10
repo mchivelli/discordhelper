@@ -1,19 +1,4 @@
-// Ensure all data subdirectories exist
-const dataDirs = [
-  path.join(dataDir, 'tasks'),
-  path.join(dataDir, 'stages'),
-  path.join(dataDir, 'task_suggestions'),
-  path.join(dataDir, 'bot_settings'),
-  path.join(dataDir, 'announcements'),
-  path.join(dataDir, 'changelogs')
-];
-
-dataDirs.forEach(dir => {
-  fs.ensureDirSync(dir);
-  logger.info(`Ensured data directory: ${dir}`);
-});
-
-logger.info(`Data directories initialized at: ${dataDir}`);const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../utils/db');
 const { getPrereqs, getSuggestions, generateTaskStages, enhanceTaskDescription, enhanceTaskNote, checkAIStatus } = require('../utils/ai');
 const { stageActionRow } = require('../components/buttons');
