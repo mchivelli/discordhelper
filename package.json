@@ -1,0 +1,31 @@
+{
+  "name": "discord-helper-bot",
+  "version": "1.1.0",
+  "description": "A comprehensive Discord bot for task management, change tracking, and announcements with AI-powered enhancements.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "deploy-commands": "node src/utils/deploy.js",
+    "test": "jest",
+    "lint": "eslint .",
+    "start:prod": "NODE_ENV=production node src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.0.0",
+    "@discordjs/rest": "^1.5.0",
+    "dotenv": "^16.0.0",
+    "node-cron": "^3.0.0",
+    "fs-extra": "^11.1.0",
+    "winston": "^3.8.2"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22",
+    "jest": "^29.5.0",
+    "eslint": "^8.36.0",
+    "supertest": "^6.3.3"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
+}
