@@ -180,6 +180,7 @@ async function getSuggestions(partial, context) {
     return [];
   }
 }
+
 /**
  * Generate AI-suggested stages for a task
  * @param {string} taskName - Name of the task
@@ -191,17 +192,30 @@ async function generateTaskStages(taskName, description, deadline = '') {
   const messages = [
     {
       role: 'system',
-      content: 'You are a Discord task management assistant. Create 4-5 logical stages for completing the described task in a Discord server environment. Each stage should have an emoji prefix in its name and a detailed description relevant to Discord communities. Focus on collaboration, communication, and community engagement.'
+      content: 'You are a task management assistant for a Discord server. Generate 5 task stages that would help complete the given task successfully. Each stage should have a name and description. Add an emoji at the start of each stage name. Respond with a proper JSON array. Use different emojis for each stage.'
     },
     {
       role: 'user',
-      content: `Task: ${taskName}\nDescription: ${description}${deadline ? `\nDeadline: ${deadline}` : ''}\n\nPlease suggest logical stages for completing this Discord task. Each stage name should start with an appropriate emoji. Return a JSON array of objects with "name" and "description" properties.`
+      content: `Task: ${taskName}\nDescription: ${description}${deadline ? `\nDeadline: ${deadline}` : ''}\n\nPlease suggest 5 logical stages to complete this task. Format your response as a valid JSON array of objects, each with "name" and "description" properties. The name should start with an emoji. Do not use any text outside of the JSON array.`
     }
   ];
   
-  const result = await callLLMAPI(messages, 500);
+  let result;
+  try {
+    result = await callLLMAPI(messages, 800);
+    console.log('AI Stage Suggestions Result:', result);
+  } catch (error) {
+    console.error('Error generating task stages:', error);
+    // Return default stages if API call fails
+    return [
+      { name: '📋 Planning', description: 'Define objectives and organize resources for this Discord task.' },
+      { name: '🔧 Setup', description: 'Prepare the necessary environment and configurations.' },
+      { name: '⚙️ Implementation', description: 'Execute the main work required to complete the task.' },
+      { name: '🧪 Testing', description: 'Review and verify everything works correctly.' },
+      { name: '🚀 Deployment', description: 'Release the completed work to the community.' }
+    ];
+  }
   
-  // Extract the JSON array from the response
   try {
     // Find anything that looks like a JSON array
     const match = result.match(/\[\s*\{.*\}\s*\]/s);
@@ -209,7 +223,15 @@ async function generateTaskStages(taskName, description, deadline = '') {
       return JSON.parse(match[0]);
     } 
     // If no array found, try parsing the whole response
-    return JSON.parse(result);
+    try {
+      return JSON.parse(result);
+    } catch {
+      // If still can't parse, extract from markdown code blocks if present
+      const codeBlockMatch = result.match(/```(?:json)?([\s\S]*?)```/);
+      if (codeBlockMatch && codeBlockMatch[1]) {
+        return JSON.parse(codeBlockMatch[1].trim());
+      }
+    }
   } catch (error) {
     console.error('Failed to parse AI stage suggestions:', error);
     // Return Discord-optimized default stages if parsing fails

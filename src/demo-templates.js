@@ -1,240 +1,315 @@
-// Simple demo for Task Templates and AI Features
-// This script shows the task templates in a user-friendly way
-
-// Import the task templates
-const templates = {
-  // Web development project template
-  "web": {
-    name: "Web Development",
-    stages: [
-      { name: "Planning", description: "Define requirements, create wireframes, and plan project architecture." },
-      { name: "Design", description: "Create visual designs and UI/UX elements." },
-      { name: "Development", description: "Implement frontend and backend functionality." },
-      { name: "Testing", description: "Perform functional testing, fix bugs, and optimize performance." },
-      { name: "Deployment", description: "Deploy to production environment and document the project." }
-    ]
-  },
-  
-  // Meeting preparation template
-  "meeting": {
-    name: "Meeting Preparation",
-    stages: [
-      { name: "Agenda Setting", description: "Define meeting goals and create a detailed agenda." },
-      { name: "Preparation", description: "Prepare necessary materials and supporting documents." },
-      { name: "Invitations", description: "Send invitations to all participants with relevant information." },
-      { name: "Facilitation", description: "Host the meeting and ensure all agenda items are covered." },
-      { name: "Follow-up", description: "Document decisions and distribute action items to participants." }
-    ]
-  },
-  
-  // Content creation template
-  "content": {
-    name: "Content Creation",
-    stages: [
-      { name: "Research", description: "Gather information and identify key points." },
-      { name: "Outline", description: "Create a structured outline of the content." },
-      { name: "Draft", description: "Write the first draft of the content." },
-      { name: "Review", description: "Review and refine the content for quality." },
-      { name: "Publish", description: "Finalize and publish the content to the target platform." }
-    ]
-  },
-  
-  // Bug fixing template
-  "bugfix": {
-    name: "Bug Fixing",
-    stages: [
-      { name: "Reproduction", description: "Verify and document the steps to reproduce the bug." },
-      { name: "Analysis", description: "Analyze the code to identify the root cause." },
-      { name: "Implementation", description: "Implement the necessary fixes." },
-      { name: "Testing", description: "Test the fix thoroughly to ensure the bug is resolved." },
-      { name: "Release", description: "Release the fix to production." }
-    ]
-  },
-  
-  // Event planning template
-  "event": {
-    name: "Event Planning",
-    stages: [
-      { name: "Initial Planning", description: "Define event goals, budget, and timeline." },
-      { name: "Logistics", description: "Book venue, arrange catering, and organize equipment." },
-      { name: "Promotion", description: "Create and distribute promotional materials." },
-      { name: "Execution", description: "Manage the event on the day." },
-      { name: "Follow-up", description: "Send thank-yous, collect feedback, and review outcomes." }
-    ]
-  }
-};
-
-// Visual progress indicators
-function createProgressBar(percentage) {
-  const filledChar = '■';
-  const emptyChar = '□';
-  const barLength = 15; // Slightly shorter bar to fit better in Discord
-  const filledLength = Math.round((percentage / 100) * barLength);
-  const emptyLength = barLength - filledLength;
-  
-  const filled = filledChar.repeat(filledLength);
-  const empty = emptyChar.repeat(emptyLength);
-  
-  // Add emoji indicators based on progress
-  let statusEmoji = '';
-  if (percentage === 0) {
-    statusEmoji = '🆕 ';
-  } else if (percentage < 25) {
-    statusEmoji = '🔄 ';
-  } else if (percentage < 50) {
-    statusEmoji = '⚙️ ';
-  } else if (percentage < 75) {
-    statusEmoji = '📈 ';
-  } else if (percentage < 100) {
-    statusEmoji = '🔜 ';
-  } else {
-    statusEmoji = '✅ ';
-  }
-  
-  return `${statusEmoji}${filled}${empty} ${percentage}%`;
-}
-
-// Date formatting with contextual indicators
-function formatDate(timestamp) {
-  if (!timestamp) return 'No date set';
-  
-  try {
-    // Try to parse the input as a date string first
-    let date;
-    if (typeof timestamp === 'string') {
-      // Handle DD.MM.YYYY format (convert to YYYY-MM-DD for parsing)
-      if (timestamp.includes('.')) {
-        const parts = timestamp.split('.');
-        if (parts.length === 3) {
-          timestamp = `${parts[2]}-${parts[1]}-${parts[0]}`;
+// Task templates for Discord server task management
+module.exports = {
+  // Templates accessible via /task create template:<name>
+  templates: {
+    // General Discord templates
+    web: {
+      name: 'Discord Web Integration',
+      stages: [
+        { 
+          name: '📋 Planning', 
+          description: 'Determine requirements and feasibility of the web integration with Discord'
+        },
+        { 
+          name: '🔗 API Setup', 
+          description: 'Configure necessary API connections between web service and Discord'
+        },
+        { 
+          name: '💻 Development', 
+          description: 'Build the integration components and features'
+        },
+        { 
+          name: '🧪 Testing', 
+          description: 'Test the integration in a controlled environment'
+        },
+        { 
+          name: '🚀 Deployment', 
+          description: 'Release the web integration to Discord server members'
         }
-      }
-      date = new Date(timestamp);
-    } else {
-      // Handle as timestamp
-      date = new Date(timestamp);
+      ]
+    },
+    meeting: {
+      name: 'Discord Server Meeting',
+      stages: [
+        { 
+          name: '📅 Scheduling', 
+          description: 'Set date, time and agenda for the meeting'
+        },
+        { 
+          name: '📢 Announcements', 
+          description: 'Notify all relevant members about the upcoming meeting'
+        },
+        { 
+          name: '📝 Preparation', 
+          description: 'Prepare materials, slides, and talking points'
+        },
+        { 
+          name: '🎤 Execution', 
+          description: 'Host the meeting, take notes, and manage discussion'
+        },
+        { 
+          name: '📋 Follow-up', 
+          description: 'Share meeting notes and assign action items'
+        }
+      ]
+    },
+    content: {
+      name: 'Server Content Creation',
+      stages: [
+        { 
+          name: '🧠 Brainstorming', 
+          description: 'Generate ideas for server content based on community interests'
+        },
+        { 
+          name: '📝 Planning', 
+          description: 'Outline the content and required resources'
+        },
+        { 
+          name: '🎨 Creation', 
+          description: 'Develop the content (graphics, text, events, etc.)'
+        },
+        { 
+          name: '👀 Review', 
+          description: 'Get feedback from team members before publishing'
+        },
+        { 
+          name: '📢 Publishing', 
+          description: 'Share the content with the Discord community'
+        }
+      ]
+    },
+    bugfix: {
+      name: 'Bot Bug Fixing',
+      stages: [
+        { 
+          name: '🐛 Reproduction', 
+          description: 'Document steps to consistently reproduce the bug'
+        },
+        { 
+          name: '🔍 Investigation', 
+          description: 'Identify the root cause of the issue'
+        },
+        { 
+          name: '🛠️ Fix Implementation', 
+          description: 'Develop and implement the solution'
+        },
+        { 
+          name: '🧪 Testing', 
+          description: 'Verify the bug is fixed and no new issues introduced'
+        },
+        { 
+          name: '🚀 Deployment', 
+          description: 'Update the bot with the fix'
+        }
+      ]
+    },
+    event: {
+      name: 'Server Event Planning',
+      stages: [
+        { 
+          name: '💡 Concept', 
+          description: 'Define the event theme, purpose, and target audience'
+        },
+        { 
+          name: '📝 Planning', 
+          description: 'Create detailed event plan with timeline and resources needed'
+        },
+        { 
+          name: '📢 Promotion', 
+          description: 'Announce and market the event to community members'
+        },
+        { 
+          name: '🎭 Execution', 
+          description: 'Run the event, manage participant engagement'
+        },
+        { 
+          name: '📊 Follow-up', 
+          description: 'Gather feedback and recognize participants'
+        }
+      ]
+    },
+    moderation: {
+      name: 'Discord Moderation',
+      stages: [
+        { 
+          name: '📜 Policy Review', 
+          description: 'Review and update server rules and moderation policies'
+        },
+        { 
+          name: '👮 Team Organization', 
+          description: 'Assign responsibilities to moderation team members'
+        },
+        { 
+          name: '🛠️ Tool Setup', 
+          description: 'Configure moderation bots and tools'
+        },
+        { 
+          name: '📊 Implementation', 
+          description: 'Apply new moderation procedures and train team'
+        },
+        { 
+          name: '🔍 Monitoring', 
+          description: 'Evaluate effectiveness and adjust as needed'
+        }
+      ]
+    },
+    
+    // War SMP Server specific templates
+    warEvent: {
+      name: 'War SMP Battle Event',
+      stages: [
+        { 
+          name: '⚔️ Battle Planning', 
+          description: 'Design the battle scenario, rules, and rewards'
+        },
+        { 
+          name: '🏗️ Map Preparation', 
+          description: 'Build or modify battle arena and prepare necessary resources'
+        },
+        { 
+          name: '📢 Faction Briefing', 
+          description: 'Inform faction leaders about event details and ensure balanced participation'
+        },
+        { 
+          name: '🎭 Event Execution', 
+          description: 'Run the battle event, moderate gameplay, and ensure fair play'
+        },
+        { 
+          name: '🏆 Aftermath', 
+          description: 'Award prizes, update faction standings, and document outcomes'
+        }
+      ]
+    },
+    factionManagement: {
+      name: 'Faction Management',
+      stages: [
+        { 
+          name: '📋 Roster Review', 
+          description: 'Update faction membership list and roles'
+        },
+        { 
+          name: '🔄 Role Assignments', 
+          description: 'Assign or update member responsibilities within the faction'
+        },
+        { 
+          name: '📢 Communication', 
+          description: 'Establish or improve faction communication channels'
+        },
+        { 
+          name: '🏆 Goal Setting', 
+          description: 'Define faction objectives and strategies'
+        },
+        { 
+          name: '📊 Performance Review', 
+          description: 'Evaluate faction progress and member contributions'
+        }
+      ]
+    },
+    buildProject: {
+      name: 'War SMP Build Project',
+      stages: [
+        { 
+          name: '🎨 Design', 
+          description: 'Create plans and mockups for the building project'
+        },
+        { 
+          name: '🗺️ Location Scouting', 
+          description: 'Find and secure suitable location for the project'
+        },
+        { 
+          name: '📦 Resource Gathering', 
+          description: 'Collect all necessary building materials'
+        },
+        { 
+          name: '🏗️ Construction', 
+          description: 'Execute the build according to plans'
+        },
+        { 
+          name: '✨ Finishing Touches', 
+          description: 'Add details, decorations, and ensure functionality'
+        }
+      ]
+    },
+    serverUpdate: {
+      name: 'War SMP Server Update',
+      stages: [
+        { 
+          name: '📝 Update Planning', 
+          description: 'Document changes, additions, and fixes for the update'
+        },
+        { 
+          name: '📢 Community Input', 
+          description: 'Gather feedback from players on proposed changes'
+        },
+        { 
+          name: '🛠️ Implementation', 
+          description: 'Apply changes to test environment and resolve issues'
+        },
+        { 
+          name: '🧪 Testing', 
+          description: 'Verify update functionality with select players'
+        },
+        { 
+          name: '🚀 Deployment', 
+          description: 'Roll out changes to production server and notify community'
+        }
+      ]
+    },
+    allianceFormation: {
+      name: 'War SMP Alliance Formation',
+      stages: [
+        { 
+          name: '🤝 Negotiation', 
+          description: 'Discuss and agree on alliance terms between factions'
+        },
+        { 
+          name: '📜 Treaty Creation', 
+          description: 'Draft formal alliance agreement with specific terms'
+        },
+        { 
+          name: '✍️ Signing Ceremony', 
+          description: 'Host formal treaty signing with faction representatives'
+        },
+        { 
+          name: '📢 Announcement', 
+          description: 'Publicize alliance to server community'
+        },
+        { 
+          name: '🔄 Integration', 
+          description: 'Begin joint operations and resource sharing between allied factions'
+        }
+      ]
     }
-    
-    if (isNaN(date.getTime())) {
-      return 'Invalid date';
-    }
-    
-    // Format as DD.MM.YYYY
-    const day = date.getDate().toString().padStart(2, '0');
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const year = date.getFullYear();
-    
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    const isToday = date.toDateString() === today.toDateString();
-    const isTomorrow = date.toDateString() === tomorrow.toDateString();
-    
-    // Add emoji and special indicator for dates close to today
-    let prefix = '';
-    
-    // Check if date is in the past
-    if (date < today && date.toDateString() !== today.toDateString()) {
-      prefix = '⚠️ ';
-    } else if (isToday) {
-      prefix = '📅 Today: ';
-    } else if (isTomorrow) {
-      prefix = '📆 Tomorrow: ';
-    } else {
-      // Calculate days until the date
-      const diffTime = date.getTime() - today.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      
-      if (diffDays > 0 && diffDays <= 7) {
-        prefix = `🔜 In ${diffDays} day${diffDays > 1 ? 's' : ''}: `;
-      } else if (diffDays > 7 && diffDays <= 14) {
-        prefix = `📅 In ${Math.floor(diffDays / 7)} week: `;
-      }
-    }
-    
-    return `${prefix}${day}.${month}.${year}`;
-  } catch (error) {
-    console.error('Error formatting date:', error);
-    return String(timestamp) || 'Unknown date';
-  }
+  },
+  
+  // Faction roles for the War SMP Server
+  factionRoles: [
+    "Leader",
+    "Co-Leader",
+    "General",
+    "Captain",
+    "Diplomat",
+    "Recruiter",
+    "Scout",
+    "Warrior",
+    "Builder",
+    "Farmer",
+    "Miner",
+    "Enchanter",
+    "Brewer",
+    "Scribe",
+    "Spy"
+  ],
+  
+  // Available factions in the War SMP
+  factions: [
+    "Red Kingdom",
+    "Blue Alliance",
+    "Green Tribe",
+    "Yellow Empire",
+    "Purple Dominion",
+    "Black Order",
+    "White Sanctuary",
+    "Orange Federation"
+  ]
 }
-
-// Demo function - shows the templates and progress indicators
-function runDemo() {
-  console.log('===== TASK TEMPLATES DEMO =====\n');
-  
-  // Show the available templates
-  console.log('Available Task Templates:');
-  for (const [id, template] of Object.entries(templates)) {
-    console.log(`\n--- ${template.name} (${id}) ---`);
-    console.log('Stages:');
-    
-    template.stages.forEach((stage, index) => {
-      console.log(`${index + 1}. ${stage.name}`);
-      console.log(`   Description: ${stage.description}`);
-    });
-  }
-  
-  console.log('\n\n===== PROGRESS VISUALIZATION DEMO =====\n');
-  
-  // Show progress bars
-  const percentages = [0, 15, 33, 50, 75, 90, 100];
-  console.log('Task Progress Visualization:');
-  percentages.forEach(pct => {
-    console.log(`${pct}%: ${createProgressBar(pct)}`);
-  });
-  
-  console.log('\n\n===== DATE FORMATTING DEMO =====\n');
-  
-  // Show date formatting
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  
-  const nextWeek = new Date(today);
-  nextWeek.setDate(today.getDate() + 7);
-  
-  const nextMonth = new Date(today);
-  nextMonth.setMonth(today.getMonth() + 1);
-  
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  
-  console.log('Date Formatting Examples:');
-  console.log(`Today's date: ${formatDate(today.toISOString().split('T')[0])}`);
-  console.log(`Tomorrow's date: ${formatDate(tomorrow.toISOString().split('T')[0])}`);
-  console.log(`Next week: ${formatDate(nextWeek.toISOString().split('T')[0])}`);
-  console.log(`Next month: ${formatDate(nextMonth.toISOString().split('T')[0])}`);
-  console.log(`Yesterday (overdue): ${formatDate(yesterday.toISOString().split('T')[0])}`);
-  
-  console.log('\n===== ANALYTICS DASHBOARD (MOCKUP) =====\n');
-  
-  // Show analytics dashboard mockup
-  console.log('📊 Task Analytics Dashboard');
-  console.log('---------------------------');
-  console.log('📋 Total Tasks: 12');
-  console.log('✅ Completed: 5 (42%)');
-  console.log('⏱️ In Progress: 4');
-  console.log('🆕 Not Started: 3');
-  console.log('\n📈 Task Completion Rate:');
-  console.log(createProgressBar(42));
-  
-  console.log('\n🎉 Recent Task Completions:');
-  console.log('• `t12345` **Website Homepage** - 2 days ago');
-  console.log('• `t12346` **Team Meeting** - 1 week ago');
-  
-  console.log('\n⏰ Upcoming Deadlines:');
-  console.log('• `t12347` **Product Launch**');
-  console.log(`  ${formatDate(nextWeek.toISOString().split('T')[0])}`);
-  console.log(`  ${createProgressBar(75)}`);
-  
-  console.log('\n• `t12348` **Quarterly Report**');
-  console.log(`  ${formatDate(nextMonth.toISOString().split('T')[0])}`);
-  console.log(`  ${createProgressBar(25)}`);
-  
-  console.log('\n===== END OF DEMO =====');
-}
-
-// Run the demo
-runDemo();

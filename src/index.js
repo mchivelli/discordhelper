@@ -206,16 +206,20 @@ client.on(Events.InteractionCreate, async interaction => {
       const customId = interaction.customId;
       
       // Handle task suggestion modifications
-      if (customId.startsWith('modify_suggestions_')) {
+      if (customId.startsWith('modify_')) {
         try {
           const parts = customId.split('_');
-          const taskId = parts[2];
-          const suggestionId = parts[3];
+          const taskId = parts[1];
+          const suggestionId = parts[2];
           
           // Get the original suggestions
-          const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+          const suggestion = db.prepare('SELECT * FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+          
           if (!suggestion) {
-            return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
+            return interaction.reply({ 
+              content: 'Could not find the original stage suggestions. Please try again.', 
+              ephemeral: true 
+            });
           }
           
           const suggestedStages = JSON.parse(suggestion.stage_suggestions);

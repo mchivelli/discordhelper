@@ -107,7 +107,49 @@ module.exports = {
       .setDescription('Check if AI services are working correctly'))
     .addSubcommand(sub => 
       sub.setName('analytics')
-      .setDescription('Get insights about tasks and productivity in this server')),
+      .setDescription('Get insights about tasks and productivity in this server'))
+    .addSubcommand(sub => 
+      sub.setName('faction')
+      .setDescription('Assign faction role to a user')
+      .addUserOption(u => 
+        u.setName('user')
+        .setDescription('User to assign faction role to')
+        .setRequired(true))
+      .addStringOption(o => 
+        o.setName('faction')
+        .setDescription('Which faction to assign')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Red Kingdom', value: 'red_kingdom' },
+          { name: 'Blue Alliance', value: 'blue_alliance' },
+          { name: 'Green Tribe', value: 'green_tribe' },
+          { name: 'Yellow Empire', value: 'yellow_empire' },
+          { name: 'Purple Dominion', value: 'purple_dominion' },
+          { name: 'Black Order', value: 'black_order' },
+          { name: 'White Sanctuary', value: 'white_sanctuary' },
+          { name: 'Orange Federation', value: 'orange_federation' }
+        ))
+      .addStringOption(o => 
+        o.setName('role')
+        .setDescription('Role within faction')
+        .setRequired(true)
+        .addChoices(
+          { name: 'Leader', value: 'leader' },
+          { name: 'Co-Leader', value: 'co_leader' },
+          { name: 'General', value: 'general' },
+          { name: 'Captain', value: 'captain' },
+          { name: 'Diplomat', value: 'diplomat' },
+          { name: 'Recruiter', value: 'recruiter' },
+          { name: 'Scout', value: 'scout' },
+          { name: 'Warrior', value: 'warrior' },
+          { name: 'Builder', value: 'builder' },
+          { name: 'Farmer', value: 'farmer' },
+          { name: 'Miner', value: 'miner' },
+          { name: 'Enchanter', value: 'enchanter' },
+          { name: 'Brewer', value: 'brewer' },
+          { name: 'Scribe', value: 'scribe' },
+          { name: 'Spy', value: 'spy' }
+        ))),
         
   // Handle autocomplete interactions
   async autocomplete(interaction) {
@@ -156,6 +198,16 @@ module.exports = {
   },
   
   async execute(interaction) {
+    // Check if user has admin permissions before allowing command execution
+    if (!interaction.member.permissions.has('ADMINISTRATOR')) {
+      return interaction.reply({
+        content: '⛔ This command is restricted to server administrators only.',
+        ephemeral: true
+      });
+    }
+    
+    await interaction.deferReply();
+    
     const subcommand = interaction.options.getSubcommand();
     
     switch (subcommand) {
@@ -735,6 +787,141 @@ module.exports = {
           logger.error('Error generating analytics:', error);
           interaction.editReply('❌ An error occurred while generating analytics: ' + error.message);
         }
+      }
+      case 'faction': {
+        try {
+          const user = interaction.options.getUser('user');
+          const faction = interaction.options.getString('faction');
+          const role = interaction.options.getString('role');
+          
+          // Get faction name in proper format
+          const factionName = faction.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+          const roleName = role.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join('-');
+          
+          // Check if user is a member of this guild
+          const member = interaction.guild.members.cache.get(user.id) || 
+                         await interaction.guild.members.fetch(user.id).catch(() => null);
+          
+          if (!member) {
+            return interaction.editReply(`❌ Could not find member ${user.tag} in this server.`);
+          }
+          
+          // Create Discord roles if they don't exist
+          // 1. Create/get the faction role
+          let factionRole = interaction.guild.roles.cache.find(r => r.name === factionName);
+          
+          if (!factionRole) {
+            // Create faction role with appropriate color
+            let roleColor = '#AAAAAA'; // Default color
+            if (faction.includes('red')) roleColor = '#FF0000';
+            if (faction.includes('blue')) roleColor = '#0000FF';
+            if (faction.includes('green')) roleColor = '#00FF00';
+            if (faction.includes('yellow')) roleColor = '#FFFF00';
+            if (faction.includes('purple')) roleColor = '#800080';
+            if (faction.includes('black')) roleColor = '#000000';
+            if (faction.includes('white')) roleColor = '#FFFFFF';
+            if (faction.includes('orange')) roleColor = '#FFA500';
+            
+            try {
+              factionRole = await interaction.guild.roles.create({
+                name: factionName,
+                color: roleColor,
+                reason: 'Faction role created by Task Bot'
+              });
+              await interaction.channel.send(`📝 Created new faction role: **${factionName}**`);
+            } catch (error) {
+              logger.error('Error creating faction role:', error);
+              return interaction.editReply(`❌ Could not create faction role: ${error.message}`);
+            }
+          }
+          
+          // 2. Create/get the position role within the faction
+          const positionRoleName = `${factionName} ${roleName}`;
+          let positionRole = interaction.guild.roles.cache.find(r => r.name === positionRoleName);
+          
+          if (!positionRole) {
+            try {
+              positionRole = await interaction.guild.roles.create({
+                name: positionRoleName,
+                reason: 'Faction position role created by Task Bot'
+              });
+              await interaction.channel.send(`📝 Created new position role: **${positionRoleName}**`);
+            } catch (error) {
+              logger.error('Error creating position role:', error);
+              return interaction.editReply(`❌ Could not create position role: ${error.message}`);
+            }
+          }
+          
+          // Assign roles to the member
+          try {
+            // First, remove any existing faction roles
+            const allFactionRoles = Array.from(interaction.guild.roles.cache.values())
+              .filter(r => 
+                r.name.includes('Kingdom') || 
+                r.name.includes('Alliance') || 
+                r.name.includes('Tribe') || 
+                r.name.includes('Empire') || 
+                r.name.includes('Dominion') || 
+                r.name.includes('Order') || 
+                r.name.includes('Sanctuary') || 
+                r.name.includes('Federation')
+              );
+            
+            // Remove old faction and position roles
+            for (const oldRole of allFactionRoles) {
+              if (member.roles.cache.has(oldRole.id)) {
+                await member.roles.remove(oldRole);
+              }
+            }
+            
+            // Add new faction and position roles
+            await member.roles.add(factionRole);
+            await member.roles.add(positionRole);
+          } catch (error) {
+            logger.error('Error assigning roles to member:', error);
+            return interaction.editReply(`❌ Could not assign roles: ${error.message}`);
+          }
+          
+          // Create record in database
+          const taskId = `f${Date.now()}`;
+          db.prepare('INSERT INTO tasks(id,name,description,created_at,guild_id,creator_id) VALUES(?,?,?,?,?,?)')
+            .run(
+              taskId,
+              `${factionName} Assignment: ${member.displayName}`,
+              `Assigned as ${roleName} in ${factionName}`,
+              Date.now(),
+              interaction.guild.id,
+              interaction.user.id
+            );
+          
+          // Success message with emoji based on faction
+          let factionEmoji = '🏷️';
+          if (faction.includes('red')) factionEmoji = '🔴';
+          if (faction.includes('blue')) factionEmoji = '🔵';
+          if (faction.includes('green')) factionEmoji = '🟢';
+          if (faction.includes('yellow')) factionEmoji = '🟡';
+          if (faction.includes('purple')) factionEmoji = '🟣';
+          if (faction.includes('black')) factionEmoji = '⚫';
+          if (faction.includes('white')) factionEmoji = '⚪';
+          if (faction.includes('orange')) factionEmoji = '🟠';
+          
+          // Create embed for response
+          const embed = new EmbedBuilder()
+            .setColor(0x3498db)
+            .setTitle(`${factionEmoji} Faction Assignment`)
+            .setDescription(`**${member.displayName}** has been assigned as **${roleName}** in the **${factionName}**`)
+            .addFields(
+              { name: 'Roles Added', value: `<@&${factionRole.id}>\n<@&${positionRole.id}>` }
+            )
+            .setFooter({ text: `Assignment ID: ${taskId}` })
+            .setTimestamp();
+            
+          await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+          logger.error('Error assigning faction:', error);
+          await interaction.editReply('❌ An error occurred while assigning faction: ' + error.message);
+        }
+        break;
       }
     }
   },
