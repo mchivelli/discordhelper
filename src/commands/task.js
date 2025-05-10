@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../utils/db');
-const { getPrereqs, getSuggestions, generateTaskStages, enhanceTaskDescription, enhanceTaskNote } = require('../utils/ai');
+const { getPrereqs, getSuggestions, generateTaskStages, enhanceTaskDescription, enhanceTaskNote, checkAIStatus } = require('../utils/ai');
 const { stageActionRow } = require('../components/buttons');
 const { stageSuggestionsActionRow, advanceStageActionRow, createCompletionNotesModal } = require('../components/task-components');
 const logger = require('../utils/logger');
@@ -102,8 +102,8 @@ module.exports = {
       sub.setName('help')
       .setDescription('Show help information about using task commands'))
     .addSubcommand(sub => 
-      sub.setName('ai-status')
-      .setDescription('Check if AI services are working properly'))
+      sub.setName('check-ai')
+      .setDescription('Check if AI services are working correctly'))
     .addSubcommand(sub => 
       sub.setName('analytics')
       .setDescription('Get insights about tasks and productivity in this server')),
@@ -168,92 +168,58 @@ module.exports = {
           const templateId = interaction.options.getString('template');
           const useAI = interaction.options.getBoolean('aihelp') || false;
           
-          // Generate task ID (custom or timestamp-based)
-          const id = customId || `t${Date.now()}`.substring(0, 8);
+          // Defer reply since this might take a while, especially with AI
+          await interaction.deferReply();
           
-          // Check if ID already exists
-          const existingTask = db.prepare('SELECT id FROM tasks WHERE id = ?').get(id);
-          if (existingTask) {
-            return interaction.reply({ 
-              content: `❌ A task with ID \`${id}\` already exists. Please choose a different ID.`, 
-              ephemeral: true 
-            });
+          // Generate unique ID if none provided
+          const id = customId || `t${Date.now()}`;
+          
+          // Save task to database
+          db.prepare(
+            'INSERT INTO tasks(id, name, description, deadline, completion_percentage, created_at, guild_id, creator_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?)'
+          ).run(id, name, contents, deadline, 0, Date.now(), interaction.guildId, interaction.user.id);
+          
+          // Prepare embed to show task was created
+          const embed = new EmbedBuilder()
+            .setTitle(`Task Created: ${name}`)
+            .setDescription(`**Description:** ${contents || 'No description provided'}`)
+            .addFields({ name: 'Task ID', value: id, inline: true })
+            .setColor('#4CAF50')
+            .setFooter({ text: 'Task Management System' })
+            .setTimestamp();
+          
+          if (deadline) {
+            embed.addFields({ name: 'Deadline', value: this.formatDate(deadline), inline: true });
           }
           
-          // Process contents with AI if needed
-          let enhancedContents = contents;
-          if (useAI && contents) {
-            await interaction.deferReply();
-            try {
-              enhancedContents = await enhanceTaskDescription(name, contents);
-            } catch (error) {
-              logger.error('Error enhancing task description:', error);
-              // Continue with original contents if AI enhancement fails
-            }
-          } else if (templateId || useAI) {
-            // We'll need to defer the reply for template usage or AI help
-            await interaction.deferReply();
-          }
-          
-          // Insert task into database
-          db.prepare('INSERT INTO tasks(id, name, description, deadline, created_at, guild_id, creator_id) VALUES(?, ?, ?, ?, ?, ?, ?)')
-            .run(id, name, enhancedContents, deadline, Date.now(), interaction.guildId, interaction.user.id);
-          
-          // If a template is specified, use template stages
+          // Create task using a predefined template
           if (templateId) {
-            try {
-              // Import the templates utility
-              const { getTemplateStages } = require('../utils/task-templates');
+            const templates = require('../utils/task-templates');
+            
+            if (templates[templateId]) {
+              const template = templates[templateId];
+              const stages = template.stages;
               
-              // Get stages from the template
-              const templateStages = getTemplateStages(templateId);
+              // Add stages from template
+              stages.forEach((stage, idx) => {
+                db.prepare(
+                  'INSERT INTO stages(task_id, idx, name, desc, created_at) VALUES(?, ?, ?, ?, ?)'
+                ).run(id, idx, stage.name, stage.description, Date.now());
+              });
               
-              if (templateStages && templateStages.length > 0) {
-                // Add each stage from the template
-                for (let i = 0; i < templateStages.length; i++) {
-                  const stage = templateStages[i];
-                  const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(id).c;
-                  db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)')
-                    .run(id, idx, stage.name, stage.description, Date.now());
-                }
-                
-                // Create embed to display template stages
-                const stagesEmbed = new EmbedBuilder()
-                  .setTitle(`Template Stages for Task: ${name}`)
-                  .setDescription(`Added ${templateStages.length} stages from the ${templateId} template.`)
-                  .setColor(0x3498db)
-                  .setFooter({ text: `Task ID: ${id}` });
-                
-                // Add each stage to the embed
-                templateStages.forEach((stage, index) => {
-                  stagesEmbed.addFields({ 
-                    name: `Stage ${index + 1}: ${stage.name}`, 
-                    value: stage.description || 'No description provided'
-                  });
-                });
-                
-                return interaction.editReply({
-                  content: `📋 Created task \`${id}\`: **${name}**`,
-                  embeds: [stagesEmbed],
-                  components: [new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                      .setCustomId(`view_${id}`)
-                      .setLabel('View Task')
-                      .setStyle(ButtonStyle.Primary)
-                  )]
-                });
-              }
-            } catch (error) {
-              logger.error('Error applying template:', error);
-              // Continue if template application fails
+              embed.addFields({ name: 'Template', value: template.name, inline: true });
+              embed.addFields({ name: 'Stages', value: `Added ${stages.length} stages from template` });
+              
+              await interaction.editReply({ embeds: [embed] });
+            } else {
+              await interaction.editReply('Template not found. Creating task without stages.');
             }
-          }
-          
-          // If AI help is requested, generate stage suggestions
-          if (useAI) {
+          } 
+          // Use AI to suggest stages if requested
+          else if (useAI) {
             try {
-              // Generate stage suggestions using AI
-              const suggestedStages = await generateTaskStages(name, enhancedContents || name, deadline);
+              // Generate stage suggestions using AI with contents field
+              const suggestedStages = await generateTaskStages(name, contents || name, deadline);
               
               // Store suggestions in database
               const suggestionResult = db.prepare(
@@ -264,52 +230,49 @@ module.exports = {
               
               // Create embed to display suggestions
               const suggestionsEmbed = new EmbedBuilder()
-                .setTitle(`AI-Suggested Stages for Task: ${name}`)
-                .setDescription(`Here are some suggested stages for your task. You can accept them as-is, modify them, or skip them and add your own stages later.`)
-                .setColor(0x4caf50)
-                .setFooter({ text: `Task ID: ${id}` });
+                .setTitle(`AI-Suggested Stages for "${name}"`)
+                .setDescription(`Here are stage suggestions based on your task description. You can accept all or selected ones.`)
+                .setColor('#2196F3')
+                .setFooter({ text: 'Powered by AI' });
               
-              // Add each suggested stage to the embed
-              suggestedStages.forEach((stage, index) => {
-                suggestionsEmbed.addFields({ 
-                  name: `Stage ${index + 1}: ${stage.name}`, 
-                  value: stage.description || 'No description provided'
+              // Add each stage as a field
+              suggestedStages.forEach((stage, idx) => {
+                suggestionsEmbed.addFields({
+                  name: `${idx + 1}. ${stage.name}`,
+                  value: stage.description
                 });
               });
               
-              // Send response with buttons for user interaction
-              return interaction.editReply({
-                content: `📋 Created task \`${id}\`: **${name}**`,
-                embeds: [suggestionsEmbed],
-                components: [stageSuggestionsActionRow(id, suggestionId)]
+              // Create buttons for accepting suggestions
+              const row = stageSuggestionsActionRow(id, suggestionId);
+              
+              // Send the suggestions
+              embed.addFields({ name: 'AI Suggestions', value: 'Stage suggestions generated. See below.' });
+              
+              await interaction.editReply({
+                embeds: [embed, suggestionsEmbed],
+                components: [row]
               });
-              
             } catch (error) {
-              logger.error('Error generating AI stage suggestions:', error);
-              
-              // Fall back to standard response if AI fails
-              if (!interaction.replied && !interaction.deferred) {
-                return interaction.reply(`📋 Created task \`${id}\`: **${name}**\nAdd stages with \`/task add-stage\``);
-              } else {
-                return interaction.editReply(`📋 Created task \`${id}\`: **${name}**\nAdd stages with \`/task add-stage\``);
-              }
+              logger.error('Error generating AI suggestions:', error);
+              embed.addFields({ name: 'AI Suggestions', value: 'Failed to generate suggestions. Please add stages manually.' });
+              await interaction.editReply({ embeds: [embed] });
             }
-          } else if (!templateId) {
-            // Standard response without AI or template
-            if (!interaction.replied && !interaction.deferred) {
-              return interaction.reply(`📋 Created task \`${id}\`: **${name}**\nAdd stages with \`/task add-stage\``);
-            } else {
-              return interaction.editReply(`📋 Created task \`${id}\`: **${name}**\nAdd stages with \`/task add-stage\``);
-            }
+          } else {
+            // No template or AI, just create the basic task
+            await interaction.editReply({ embeds: [embed] });
           }
         } catch (error) {
           logger.error('Error creating task:', error);
-          return interaction.reply({ 
-            content: `An error occurred while creating the task: ${error.message}`, 
-            ephemeral: true 
-          });
+          if (interaction.deferred) {
+            await interaction.editReply(`❌ Error creating task: ${error.message}`);
+          } else {
+            await interaction.reply({ content: `❌ Error creating task: ${error.message}`, ephemeral: true });
+          }
         }
+        break;
       }
+
       case 'add-stage': {
         const id = interaction.options.getString('id');
         const name = interaction.options.getString('name');
@@ -542,7 +505,58 @@ module.exports = {
         }
         break;
       }
-      case 'help': {
+      case 'check-ai': {
+      try {
+        await interaction.deferReply();
+        
+        // Call the AI status check function
+        const aiStatus = await checkAIStatus();
+        
+        // Create an embed to display the status info
+        const embed = new EmbedBuilder()
+          .setTitle('🤖 AI Integration Status')
+          .setColor(aiStatus.success ? 0x00FF00 : 0xFF0000)
+          .setDescription(aiStatus.success ? 
+            '✅ **AI services are working correctly!**' : 
+            '❌ **AI services are not functioning properly.**')
+          .addFields(
+            { name: 'Status', value: aiStatus.message },
+            { name: 'Available AI Features', value: [
+              '• Task stage generation',
+              '• Description enhancement',
+              '• Completion notes enhancement',
+              '• Smart command suggestions'
+            ].join('\n')}
+          )
+          .setFooter({ text: 'Using free models: Gemini or DeepSeek' })
+          .setTimestamp();
+        
+        // Add troubleshooting tips if there's an issue
+        if (!aiStatus.success) {
+          embed.addFields({
+            name: 'Troubleshooting Tips',
+            value: [
+              '• Check if the `OPENROUTER_API_KEY` is set in the .env file',
+              '• Verify the API key is valid and has not expired',
+              '• Make sure the `MODEL_NAME` is set correctly (defaults to Gemini)',
+              '• Ensure the bot has internet access to connect to OpenRouter'
+            ].join('\n')
+          });
+        }
+        
+        await interaction.editReply({ embeds: [embed] });
+      } catch (error) {
+        logger.error('Error checking AI status:', error);
+        if (interaction.deferred) {
+          await interaction.editReply({ content: 'Error checking AI status: ' + error.message });
+        } else {
+          await interaction.reply({ content: 'Error checking AI status: ' + error.message, ephemeral: true });
+        }
+      }
+      break;
+    }
+      
+    case 'help': {
         // Task help command
         const helpEmbed = new EmbedBuilder()
           .setTitle('AI-Enhanced Task Management Guide')
@@ -563,56 +577,54 @@ module.exports = {
         
         return interaction.reply({ embeds: [helpEmbed] });
       }
-      case 'ai-status': {
+      case 'check-ai': {
         try {
           await interaction.deferReply();
           
-          // Import the AI utility
-          const { checkAIStatus } = require('../utils/ai');
-          
-          // Check AI status
+          // Check AI connection status
           const status = await checkAIStatus();
           
-          // Create status embed
-          const statusEmbed = new EmbedBuilder()
+          const embed = new EmbedBuilder()
             .setTitle('AI Integration Status')
-            .setDescription(status.message)
-            .setColor(status.success ? 0x4caf50 : 0xe74c3c)
-            .addFields(
-              { 
-                name: 'Status', 
-                value: status.success ? '✅ Working' : '❌ Not Working'
-              },
-              {
-                name: 'Environment', 
-                value: `Running in ${process.env.NODE_ENV || 'development'} mode`
-              },
-              {
-                name: 'AI Model', 
-                value: process.env.MODEL_NAME || 'Not configured (using fallbacks)'
-              }
-            )
-            .setFooter({ text: 'AI-enhanced task management • Check your .env file for configuration' });
+            .setColor(status.success ? '#4CAF50' : '#F44336')
+            .setDescription(status.success 
+              ? '✅ **AI integration is working properly**'
+              : '❌ **AI integration is not functioning correctly**')
+            .addFields({ name: 'Status Details', value: status.message })
+            .setFooter({ text: 'AI-powered task management features' })
+            .setTimestamp();
           
-          // Add advice for troubleshooting if not working
-          if (!status.success) {
-            statusEmbed.addFields({
-              name: 'Troubleshooting', 
-              value: '1. Check that you have set OPENROUTER_API_KEY in your .env file\n' +
-                      '2. Verify that MODEL_NAME is properly configured\n' +
-                      '3. Make sure your API key has sufficient credits\n' +
-                      '4. The bot will use fallback responses if AI services are unavailable'
+          if (status.success) {
+            embed.addFields({ 
+              name: 'Available AI Features', 
+              value: '• AI-generated task stages and templates\n• Enhanced task descriptions\n• Completion note improvements\n• Smart deadline suggestions\n• Task analytics insights' 
+            });
+            
+            const model = process.env.MODEL_NAME || 'Default model';
+            embed.addFields({ 
+              name: 'Current AI Model', 
+              value: `${model} ${model.includes('gemini') || model.includes('deepseek') ? '(Free tier)' : ''}` 
+            });
+          } else {
+            embed.addFields({ 
+              name: 'Fallback Mode', 
+              value: 'While AI is unavailable, the bot will use predefined templates and defaults.' 
+            });
+            embed.addFields({
+              name: 'Troubleshooting',
+              value: 'Make sure the `OPENROUTER_API_KEY` environment variable is set correctly. Free models available: `google/gemini-2.5-pro-exp-03-25` or `deepseek/deepseek-coder-33b-instruct`'
             });
           }
           
-          return interaction.editReply({ embeds: [statusEmbed] });
+          await interaction.editReply({ embeds: [embed] });
         } catch (error) {
           logger.error('Error checking AI status:', error);
-          return interaction.reply({ 
-            content: `An error occurred while checking AI status: ${error.message}`, 
+          await interaction.reply({ 
+            content: `❌ Error checking AI status: ${error.message}`, 
             ephemeral: true 
           });
         }
+        break;
       }
       case 'analytics': {
         // Get task analytics

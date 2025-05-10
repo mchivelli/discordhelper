@@ -1,20 +1,22 @@
 require('dotenv').config();
 const API_KEY = process.env.OPENROUTER_API_KEY;
-const MODEL = process.env.MODEL_NAME;
+// Default to free Gemini model if none specified
+const MODEL = process.env.MODEL_NAME || 'google/gemini-2.5-pro-exp-03-25';
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Helper function to make API requests to the LLM
 async function callLLMAPI(messages, maxTokens = 200) {
-  // Fallback response if API call fails or is not configured
+  // Discord-optimized fallback responses if API call fails or is not configured
   const fallbackResponses = {
-    'getPrereqs': 'Make sure all previous stages are complete. Gather any necessary materials and information.',
+    'getPrereqs': 'Make sure all previous stages are complete. Gather necessary resources and coordinate with team members.',
     'enhanceAnnouncement': messages[1]?.content?.replace('Please enhance this announcement: ', '') || 'Announcement content unavailable.',
     'getSuggestions': [],
     'generateTaskStages': [
-      { name: 'Planning', description: 'Define the scope and requirements for this task.' },
-      { name: 'Implementation', description: 'Execute the core work needed to complete the task.' },
-      { name: 'Testing', description: 'Verify functionality and quality before finalizing.' },
-      { name: 'Deployment', description: 'Release or implement the final product.' }
+      { name: '📋 Planning', description: 'Define objectives and requirements for this Discord task.' },
+      { name: '🔧 Setup', description: 'Prepare necessary resources and configure initial environment.' },
+      { name: '⚙️ Implementation', description: 'Execute the main work required to complete the task.' },
+      { name: '🧪 Testing', description: 'Verify functionality and review results before finalizing.' },
+      { name: '🚀 Deployment', description: 'Release the completed work to the community.' }
     ],
     'enhanceTaskNote': messages[1]?.content?.replace('Stage: ', '').replace('\nCompletion Notes: ', '').split('\n\nPlease enhance')[0] || 'Completed successfully.',
     'enhanceTaskDescription': messages[1]?.content?.replace('Task Name: ', '').replace('\nOriginal Description: ', '').split('\n\nPlease enhance')[0] || 'Task description unavailable.'
@@ -43,7 +45,7 @@ async function callLLMAPI(messages, maxTokens = 200) {
         'X-Title': 'Discord Task Management Bot'
       },
       body: JSON.stringify({
-        model: MODEL || 'openai/gpt-3.5-turbo',
+        model: MODEL || 'google/gemini-2.5-pro-exp-03-25', // Default to free Gemini model
         messages: messages,
         max_tokens: maxTokens
       })
@@ -189,11 +191,11 @@ async function generateTaskStages(taskName, description, deadline = '') {
   const messages = [
     {
       role: 'system',
-      content: 'You are a project management assistant. Create 3-5 logical stages for completing the described task. Each stage should have a clear name and detailed description.'
+      content: 'You are a Discord task management assistant. Create 4-5 logical stages for completing the described task in a Discord server environment. Each stage should have an emoji prefix in its name and a detailed description relevant to Discord communities. Focus on collaboration, communication, and community engagement.'
     },
     {
       role: 'user',
-      content: `Task: ${taskName}\nDescription: ${description}${deadline ? `\nDeadline: ${deadline}` : ''}\n\nPlease suggest logical stages for completing this task. Return a JSON array of objects with "name" and "description" properties.`
+      content: `Task: ${taskName}\nDescription: ${description}${deadline ? `\nDeadline: ${deadline}` : ''}\n\nPlease suggest logical stages for completing this Discord task. Each stage name should start with an appropriate emoji. Return a JSON array of objects with "name" and "description" properties.`
     }
   ];
   
@@ -210,12 +212,13 @@ async function generateTaskStages(taskName, description, deadline = '') {
     return JSON.parse(result);
   } catch (error) {
     console.error('Failed to parse AI stage suggestions:', error);
-    // Return default stages if parsing fails
+    // Return Discord-optimized default stages if parsing fails
     return [
-      { name: 'Planning', description: 'Define the scope and requirements' },
-      { name: 'Implementation', description: 'Execute the core work' },
-      { name: 'Testing', description: 'Verify functionality and quality' },
-      { name: 'Deployment', description: 'Release to production' }
+      { name: '📋 Planning', description: 'Define objectives and organize resources for this Discord task.' },
+      { name: '🔧 Setup', description: 'Prepare the necessary environment and configurations.' },
+      { name: '⚙️ Implementation', description: 'Execute the main work required to complete the task.' },
+      { name: '🧪 Testing', description: 'Review and verify everything works correctly.' },
+      { name: '🚀 Deployment', description: 'Release the completed work to the community.' }
     ];
   }
 }
@@ -230,11 +233,11 @@ async function enhanceTaskNote(notes, stageName) {
   const messages = [
     {
       role: 'system',
-      content: 'You are a professional documentation assistant. Your task is to improve the provided completion notes to make them clearer, more structured, and professional while preserving all key information.'
+      content: 'You are a Discord task assistant specializing in documentation. Your task is to improve the provided completion notes to make them clearer, more structured, and engaging for Discord community members. Use friendly language while preserving key information.'
     },
     {
       role: 'user',
-      content: `Stage: ${stageName}\nCompletion Notes: ${notes}\n\nPlease enhance these completion notes to be more professional and informative.`
+      content: `Stage: ${stageName}\nCompletion Notes: ${notes}\n\nPlease enhance these completion notes to be more informative and engaging for our Discord server. Keep it concise but comprehensive.`
     }
   ];
   
@@ -251,11 +254,11 @@ async function enhanceTaskDescription(taskName, description) {
   const messages = [
     {
       role: 'system',
-      content: 'You are a professional project management assistant. Your task is to improve the provided task description to make it clearer, more actionable, and properly structured.'
+      content: 'You are a Discord community task assistant. Your task is to improve the provided description to make it clearer, more actionable, and properly structured for Discord server members. Use friendly, engaging language appropriate for online communities.'
     },
     {
       role: 'user',
-      content: `Task Name: ${taskName}\nOriginal Description: ${description}\n\nPlease enhance this task description to be more professional, specific and well-structured.`
+      content: `Task Name: ${taskName}\nOriginal Description: ${description}\n\nPlease enhance this task description to be more engaging, specific, and well-structured for our Discord server members. Keep it concise but informative.`
     }
   ];
   
