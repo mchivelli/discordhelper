@@ -13,13 +13,13 @@ module.exports = {
       sub.setName('create')
       .setDescription('Create a new task with a unique ID')
       .addStringOption(o => 
-        o.setName('id')
-        .setDescription('Optional custom ID for the task')
-        .setRequired(false))
-      .addStringOption(o => 
         o.setName('name')
         .setDescription('Name of the task (e.g., "Website Redesign")')
         .setRequired(true))
+      .addStringOption(o => 
+        o.setName('id')
+        .setDescription('Optional custom ID for the task')
+        .setRequired(false))
       .addStringOption(o => 
         o.setName('contents')
         .setDescription('Detailed description of what the task involves')
@@ -33,11 +33,12 @@ module.exports = {
         .setDescription('Use a predefined template for common task types')
         .setRequired(false)
         .addChoices(
-          { name: 'Web Development', value: 'web' },
-          { name: 'Meeting Preparation', value: 'meeting' },
-          { name: 'Content Creation', value: 'content' },
-          { name: 'Bug Fixing', value: 'bugfix' },
-          { name: 'Event Planning', value: 'event' }
+          { name: 'Discord Web Integration', value: 'web' },
+          { name: 'Discord Server Meeting', value: 'meeting' },
+          { name: 'Server Content Creation', value: 'content' },
+          { name: 'Bot Bug Fixing', value: 'bugfix' },
+          { name: 'Server Event Planning', value: 'event' },
+          { name: 'Discord Moderation', value: 'moderation' }
         ))
       .addBooleanOption(o => 
         o.setName('aihelp')
