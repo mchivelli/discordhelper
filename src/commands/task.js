@@ -113,6 +113,14 @@ module.exports = {
       sub.setName('analytics')
       .setDescription('Get insights about tasks and productivity in this server'))
     .addSubcommand(sub => 
+      sub.setName('remove')
+      .setDescription('Remove a task and all its stages')
+      .addStringOption(o => 
+        o.setName('id')
+        .setDescription('Task ID to remove (e.g., "t12345")')
+        .setRequired(true)
+        .setAutocomplete(true)))
+    .addSubcommand(sub => 
       sub.setName('faction')
       .setDescription('Assign faction role to a user')
       .addUserOption(u => 
@@ -168,26 +176,50 @@ module.exports = {
       let choices = [];
       
       try {
-        // Query tasks based on partial ID match
-        const tasks = db.prepare(
-          `SELECT id, name FROM tasks WHERE id LIKE ? OR name LIKE ? ORDER BY created_at DESC LIMIT 25`
-        ).all(`%${partialId}%`, `%${partialId}%`);
+        // Only include valid task IDs in the results (avoid UUIDs and random strings)
+        // Start with exact ID match if available
+        const exactTask = db.prepare('SELECT id, name FROM tasks WHERE id = ?').get(partialId);
+        if (exactTask) {
+          choices.push({
+            name: `📌 ${exactTask.id}: ${exactTask.name}`.substring(0, 100),
+            value: exactTask.id
+          });
+        }
         
-        choices = tasks.map(task => ({
-          name: `${task.id}: ${task.name}`.substring(0, 100),
-          value: task.id
-        }));
+        // Then add partial matches
+        const tasks = db.prepare(
+          `SELECT id, name, created_at FROM tasks 
+           WHERE (id LIKE ? OR name LIKE ?) 
+           AND id != ? 
+           ORDER BY created_at DESC LIMIT 15`
+        ).all(`%${partialId}%`, `%${partialId}%`, partialId || '');
+        
+        // Format the results nicely
+        const taskChoices = tasks.map(task => {
+          const date = new Date(task.created_at);
+          const formattedDate = `${date.getMonth()+1}/${date.getDate()}`;
+          return {
+            name: `${task.id}: ${task.name} (${formattedDate})`.substring(0, 100),
+            value: task.id
+          };
+        });
+        
+        choices = [...choices, ...taskChoices];
         
         // If no matches, show most recent tasks
         if (choices.length === 0) {
           const recentTasks = db.prepare(
-            `SELECT id, name FROM tasks ORDER BY created_at DESC LIMIT 10`
+            `SELECT id, name, created_at FROM tasks ORDER BY created_at DESC LIMIT 10`
           ).all();
           
-          choices = recentTasks.map(task => ({
-            name: `${task.id}: ${task.name}`.substring(0, 100),
-            value: task.id
-          }));
+          choices = recentTasks.map(task => {
+            const date = new Date(task.created_at);
+            const formattedDate = `${date.getMonth()+1}/${date.getDate()}`;
+            return {
+              name: `${task.id}: ${task.name} (${formattedDate})`.substring(0, 100),
+              value: task.id
+            };
+          });
         }
       } catch (err) {
         console.error('Error in autocomplete:', err);
@@ -380,7 +412,7 @@ module.exports = {
           // No stages message
           if (!stages.length) {
             embed.addFields({ name: 'No stages defined', value: 'Add stages with `/task add-stage`' });
-            return interaction.reply({ embeds: [embed], components: [stageActionRow(id)] });
+            return interaction.editReply({ embeds: [embed], components: [stageActionRow(id)] });
           }
           
           // Add stages to embed
@@ -639,6 +671,41 @@ module.exports = {
         }
         break;
       }
+      case 'remove': {
+        try {
+          await interaction.deferReply();
+          const id = interaction.options.getString('id');
+          
+          // Check if task exists
+          const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(id);
+          if (!task) {
+            return interaction.editReply(`❌ Task with ID \`${id}\` not found.`);
+          }
+          
+          // Get count of stages to be removed
+          const stageCount = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(id).count;
+          
+          // Delete stages first
+          db.prepare('DELETE FROM stages WHERE task_id = ?').run(id);
+          
+          // Delete any suggestions
+          db.prepare('DELETE FROM task_suggestions WHERE task_id = ?').run(id);
+          
+          // Delete the task
+          db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+          
+          return interaction.editReply(`✅ Successfully removed task \`${id}\`: **${task.name}** and ${stageCount} associated stages.`);
+        } catch (error) {
+          logger.error('Error removing task:', error);
+          if (interaction.deferred) {
+            await interaction.editReply(`❌ Error removing task: ${error.message}`);
+          } else {
+            await interaction.reply({ content: `❌ Error removing task: ${error.message}`, ephemeral: true });
+          }
+        }
+        break;
+      }
+
       case 'help': {
         // Task help command
         const helpEmbed = new EmbedBuilder()

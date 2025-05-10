@@ -118,7 +118,7 @@ function createModifySuggestionsModal(taskId, suggestionsId, stages) {
   const safeSuggestionsId = suggestionsId.toString().substring(0, 20);
   
   const modal = new ModalBuilder()
-    .setCustomId(`modify_${safeTaskId}_${safeSuggestionsId}`)
+    .setCustomId(`modify_suggestions_${safeTaskId}_${safeSuggestionsId}`)
     .setTitle('Modify Suggested Stages');
   
   // Safely handle stages array

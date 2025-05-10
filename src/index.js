@@ -486,6 +486,8 @@ View with \`/task list id:${taskId}\`.`
         const taskAction = customIdParts[0];
         const taskId = customIdParts[1];
         
+        console.log(`Button pressed: ${taskAction}, taskId: ${taskId}, full customId: ${interaction.customId}`);
+        
         // Handle AI-generated stage suggestions
         if (taskAction === 'accept') {
           try {
@@ -497,11 +499,29 @@ View with \`/task list id:${taskId}\`.`
               return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
             }
             
-            const suggestedStages = JSON.parse(suggestion.stage_suggestions);
+            // Parse and validate the suggested stages from the database
+            let suggestedStages = [];
+            try {
+              suggestedStages = JSON.parse(suggestion.stage_suggestions);
+              // Validate each stage has required properties
+              suggestedStages = suggestedStages.filter(stage => {
+                return stage && typeof stage === 'object' && stage.name && typeof stage.name === 'string';
+              });
+              
+              console.log(`Validated ${suggestedStages.length} valid stages out of ${JSON.parse(suggestion.stage_suggestions).length} total`);
+            } catch (parseError) {
+              logger.error('Error parsing stage suggestions:', parseError);
+              return interaction.reply({ content: 'Invalid stage data encountered. Please try again.', ephemeral: true });
+            }
+            
+            if (suggestedStages.length === 0) {
+              return interaction.reply({ content: 'No valid stages found in the suggestions. Please try again.', ephemeral: true });
+            }
             
             // Add each suggested stage to the task
             await interaction.deferReply();
             
+            // Insert validated stages into the database
             for (let i = 0; i < suggestedStages.length; i++) {
               const stage = suggestedStages[i];
               const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId).c;
@@ -515,10 +535,12 @@ View with \`/task list id:${taskId}\`.`
             // Get task details for the response
             const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);
             
+            console.log(`Added ${suggestedStages.length} stages to task ${taskId}. Stage details:`, JSON.stringify(suggestedStages));
+            
             // Send confirmation message
             return interaction.editReply({ 
-              content: `✅ Added ${suggestedStages.length} AI-suggested stages to task \`${taskId}\`: **${task.name}**.
-View with \`/task list id:${taskId}\`.`,
+              content: `✅ Successfully added ${suggestedStages.length} AI-suggested stages to task \`${taskId}\`: **${task?.name || 'Unknown task'}**.
+View stages with \`/task list id:${taskId}\`.`,
               components: [] 
             });
           } catch (error) {
@@ -534,6 +556,7 @@ View with \`/task list id:${taskId}\`.`,
         else if (taskAction === 'modify') {
           try {
             const suggestionId = customIdParts[2];
+            console.log('Modify button pressed. customId parts:', customIdParts);
             
             // Get the suggested stages from the database
             const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE rowid = ?').get(suggestionId);
@@ -543,24 +566,9 @@ View with \`/task list id:${taskId}\`.`,
             
             const suggestedStages = JSON.parse(suggestion.stage_suggestions);
             
-            // Create a modal for modifying the stages
-            const modal = new ModalBuilder()
-              .setCustomId(`modify_suggestions_${taskId}_${suggestionId}`)
-              .setTitle('Modify Suggested Stages');
-              
-            // Add text inputs for each stage (max 5)
-            for (let i = 0; i < Math.min(suggestedStages.length, 5); i++) {
-              const stage = suggestedStages[i];
-              const stageInput = new TextInputBuilder()
-                .setCustomId(`stage_${i}`)
-                .setLabel(`Stage ${i+1}: ${stage.name}`)
-                .setValue(`${stage.name}: ${stage.description || ''}`)
-                .setStyle(TextInputStyle.Paragraph)
-                .setRequired(true)
-                .setMaxLength(300);
-                
-              modal.addComponents(new ActionRowBuilder().addComponents(stageInput));
-            }
+            // Use the pre-built component to create the modal
+            const { createModifySuggestionsModal } = require('./components/task-components');
+            const modal = createModifySuggestionsModal(taskId, suggestionId, suggestedStages);
             
             // Show the modal to the user
             return interaction.showModal(modal);
