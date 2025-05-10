@@ -1,4 +1,19 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+// Ensure all data subdirectories exist
+const dataDirs = [
+  path.join(dataDir, 'tasks'),
+  path.join(dataDir, 'stages'),
+  path.join(dataDir, 'task_suggestions'),
+  path.join(dataDir, 'bot_settings'),
+  path.join(dataDir, 'announcements'),
+  path.join(dataDir, 'changelogs')
+];
+
+dataDirs.forEach(dir => {
+  fs.ensureDirSync(dir);
+  logger.info(`Ensured data directory: ${dir}`);
+});
+
+logger.info(`Data directories initialized at: ${dataDir}`);const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const db = require('../utils/db');
 const { getPrereqs, getSuggestions, generateTaskStages, enhanceTaskDescription, enhanceTaskNote, checkAIStatus } = require('../utils/ai');
 const { stageActionRow } = require('../components/buttons');
@@ -206,13 +221,12 @@ module.exports = {
       });
     }
     
-    await interaction.deferReply();
-    
     const subcommand = interaction.options.getSubcommand();
     
     switch (subcommand) {
       case 'create': {
         try {
+          await interaction.deferReply();
           // Get all the user options
           const name = interaction.options.getString('name');
           const customId = interaction.options.getString('id');
@@ -220,9 +234,6 @@ module.exports = {
           const deadline = interaction.options.getString('deadline') || '';
           const templateId = interaction.options.getString('template');
           const useAI = interaction.options.getBoolean('aihelp') || false;
-          
-          // Defer reply since this might take a while, especially with AI
-          await interaction.deferReply();
           
           // Generate unique ID if none provided
           const id = customId || `t${Date.now()}`;
@@ -327,15 +338,26 @@ module.exports = {
       }
 
       case 'add-stage': {
-        const id = interaction.options.getString('id');
-        const name = interaction.options.getString('name');
-        const desc = interaction.options.getString('desc');
-        const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(id).c;
-        db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)').run(id, idx, name, desc, Date.now());
-        return interaction.reply(`➕ Stage **${name}** added to task \`${id}\``);
+        try {
+          await interaction.deferReply();
+          const id = interaction.options.getString('id');
+          const name = interaction.options.getString('name');
+          const desc = interaction.options.getString('desc');
+          const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(id).c;
+          db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)').run(id, idx, name, desc, Date.now());
+          return interaction.editReply(`➕ Stage **${name}** added to task \`${id}\``);
+        } catch (error) {
+          logger.error('Error adding stage:', error);
+          if (interaction.deferred) {
+            await interaction.editReply(`❌ Error adding stage: ${error.message}`);
+          } else {
+            await interaction.reply({ content: `❌ Error adding stage: ${error.message}`, ephemeral: true });
+          }
+        }
       }
       case 'list': {
         try {
+          await interaction.deferReply();
           const id = interaction.options.getString('id');
           
           // Get task details
@@ -419,14 +441,22 @@ module.exports = {
           return interaction.reply({ embeds: [embed], components });
         } catch (error) {
           logger.error('Error listing task:', error);
-          return interaction.reply({ 
-            content: `An error occurred while listing the task: ${error.message}`, 
-            ephemeral: true 
-          });
+          if (interaction.deferred) {
+            await interaction.editReply({ 
+              content: `An error occurred while listing the task: ${error.message}`, 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.reply({ 
+              content: `An error occurred while listing the task: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
         }
       }
       case 'advance': {
         try {
+          await interaction.deferReply();
           const id = interaction.options.getString('id');
           const notes = interaction.options.getString('notes');
           const enhanceWithAi = interaction.options.getBoolean('enhancewithai') || false;
@@ -440,7 +470,6 @@ module.exports = {
           // If notes were provided and AI enhancement requested, process notes
           let processedNotes = notes;
           if (notes && enhanceWithAi) {
-            await interaction.deferReply();
             try {
               processedNotes = await enhanceTaskNote(notes, currentStage.name);
             } catch (error) {
@@ -516,14 +545,22 @@ module.exports = {
           }
         } catch (error) {
           logger.error('Error advancing stage:', error);
-          return interaction.reply({ 
-            content: `An error occurred while advancing the stage: ${error.message}`, 
-            ephemeral: true 
-          });
+          if (interaction.deferred) {
+            await interaction.editReply({ 
+              content: `An error occurred while advancing the stage: ${error.message}`, 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.reply({ 
+              content: `An error occurred while advancing the stage: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
         }
       }
       case 'assign': {
         try {
+          await interaction.deferReply();
           const id = interaction.options.getString('id');
           const user = interaction.options.getUser('user');
           
@@ -551,65 +588,71 @@ module.exports = {
           return interaction.reply(`👤 Assigned <@${user.id}> to **${row.name}** for task \`${id}\``);
         } catch (error) {
           logger.error('Error assigning user to task:', error);
-          return interaction.reply({ 
-            content: `An error occurred while assigning the user: ${error.message}`, 
-            ephemeral: true 
-          });
+          if (interaction.deferred) {
+            await interaction.editReply({ 
+              content: `An error occurred while assigning the user: ${error.message}`, 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.reply({ 
+              content: `An error occurred while assigning the user: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
         }
         break;
       }
       case 'check-ai': {
-      try {
-        await interaction.deferReply();
-        
-        // Call the AI status check function
-        const aiStatus = await checkAIStatus();
-        
-        // Create an embed to display the status info
-        const embed = new EmbedBuilder()
-          .setTitle('🤖 AI Integration Status')
-          .setColor(aiStatus.success ? 0x00FF00 : 0xFF0000)
-          .setDescription(aiStatus.success ? 
-            '✅ **AI services are working correctly!**' : 
-            '❌ **AI services are not functioning properly.**')
-          .addFields(
-            { name: 'Status', value: aiStatus.message },
-            { name: 'Available AI Features', value: [
-              '• Task stage generation',
-              '• Description enhancement',
-              '• Completion notes enhancement',
-              '• Smart command suggestions'
-            ].join('\n')}
-          )
-          .setFooter({ text: 'Using free models: Gemini or DeepSeek' })
-          .setTimestamp();
-        
-        // Add troubleshooting tips if there's an issue
-        if (!aiStatus.success) {
-          embed.addFields({
-            name: 'Troubleshooting Tips',
-            value: [
-              '• Check if the `OPENROUTER_API_KEY` is set in the .env file',
-              '• Verify the API key is valid and has not expired',
-              '• Make sure the `MODEL_NAME` is set correctly (defaults to Gemini)',
-              '• Ensure the bot has internet access to connect to OpenRouter'
-            ].join('\n')
-          });
+        try {
+          await interaction.deferReply();
+          
+          // Call the AI status check function
+          const aiStatus = await checkAIStatus();
+          
+          // Create an embed to display the status info
+          const embed = new EmbedBuilder()
+            .setTitle('🤖 AI Integration Status')
+            .setColor(aiStatus.success ? 0x00FF00 : 0xFF0000)
+            .setDescription(aiStatus.success ? 
+              '✅ **AI services are working correctly!**' : 
+              '❌ **AI services are not functioning properly.**')
+            .addFields(
+              { name: 'Status', value: aiStatus.message },
+              { name: 'Available AI Features', value: [
+                '• Task stage generation',
+                '• Description enhancement',
+                '• Completion notes enhancement',
+                '• Smart command suggestions'
+              ].join('\n')}
+            )
+            .setFooter({ text: 'Using free models: Gemini or DeepSeek' })
+            .setTimestamp();
+          
+          // Add troubleshooting tips if there's an issue
+          if (!aiStatus.success) {
+            embed.addFields({
+              name: 'Troubleshooting Tips',
+              value: [
+                '• Check if the `OPENROUTER_API_KEY` is set in the .env file',
+                '• Verify the API key is valid and has not expired',
+                '• Make sure the `MODEL_NAME` is set correctly (defaults to Gemini)',
+                '• Ensure the bot has internet access to connect to OpenRouter'
+              ].join('\n')
+            });
+          }
+          
+          await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+          logger.error('Error checking AI status:', error);
+          if (interaction.deferred) {
+            await interaction.editReply({ content: 'Error checking AI status: ' + error.message });
+          } else {
+            await interaction.reply({ content: 'Error checking AI status: ' + error.message, ephemeral: true });
+          }
         }
-        
-        await interaction.editReply({ embeds: [embed] });
-      } catch (error) {
-        logger.error('Error checking AI status:', error);
-        if (interaction.deferred) {
-          await interaction.editReply({ content: 'Error checking AI status: ' + error.message });
-        } else {
-          await interaction.reply({ content: 'Error checking AI status: ' + error.message, ephemeral: true });
-        }
+        break;
       }
-      break;
-    }
-      
-    case 'help': {
+      case 'help': {
         // Task help command
         const helpEmbed = new EmbedBuilder()
           .setTitle('AI-Enhanced Task Management Guide')
@@ -630,60 +673,10 @@ module.exports = {
         
         return interaction.reply({ embeds: [helpEmbed] });
       }
-      case 'check-ai': {
+      case 'analytics': {
         try {
           await interaction.deferReply();
           
-          // Check AI connection status
-          const status = await checkAIStatus();
-          
-          const embed = new EmbedBuilder()
-            .setTitle('AI Integration Status')
-            .setColor(status.success ? '#4CAF50' : '#F44336')
-            .setDescription(status.success 
-              ? '✅ **AI integration is working properly**'
-              : '❌ **AI integration is not functioning correctly**')
-            .addFields({ name: 'Status Details', value: status.message })
-            .setFooter({ text: 'AI-powered task management features' })
-            .setTimestamp();
-          
-          if (status.success) {
-            embed.addFields({ 
-              name: 'Available AI Features', 
-              value: '• AI-generated task stages and templates\n• Enhanced task descriptions\n• Completion note improvements\n• Smart deadline suggestions\n• Task analytics insights' 
-            });
-            
-            const model = process.env.MODEL_NAME || 'Default model';
-            embed.addFields({ 
-              name: 'Current AI Model', 
-              value: `${model} ${model.includes('gemini') || model.includes('deepseek') ? '(Free tier)' : ''}` 
-            });
-          } else {
-            embed.addFields({ 
-              name: 'Fallback Mode', 
-              value: 'While AI is unavailable, the bot will use predefined templates and defaults.' 
-            });
-            embed.addFields({
-              name: 'Troubleshooting',
-              value: 'Make sure the `OPENROUTER_API_KEY` environment variable is set correctly. Free models available: `google/gemini-2.5-pro-exp-03-25` or `deepseek/deepseek-coder-33b-instruct`'
-            });
-          }
-          
-          await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-          logger.error('Error checking AI status:', error);
-          await interaction.reply({ 
-            content: `❌ Error checking AI status: ${error.message}`, 
-            ephemeral: true 
-          });
-        }
-        break;
-      }
-      case 'analytics': {
-        // Get task analytics
-        await interaction.deferReply();
-        
-        try {
           // Get guild ID for server-specific analytics
           const guildId = interaction.guildId;
           
@@ -785,11 +778,16 @@ module.exports = {
           
         } catch (error) {
           logger.error('Error generating analytics:', error);
-          interaction.editReply('❌ An error occurred while generating analytics: ' + error.message);
+          if (interaction.deferred) {
+            await interaction.editReply('❌ An error occurred while generating analytics: ' + error.message);
+          } else {
+            await interaction.reply({ content: '❌ An error occurred while generating analytics: ' + error.message, ephemeral: true });
+          }
         }
       }
       case 'faction': {
         try {
+          await interaction.deferReply();
           const user = interaction.options.getUser('user');
           const faction = interaction.options.getString('faction');
           const role = interaction.options.getString('role');
