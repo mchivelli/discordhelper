@@ -1,23 +1,13 @@
-// Database layer using better-sqlite3 with optimized PRAGMAs
-const Database = require('better-sqlite3');
+// Database layer using file-based JSON storage to avoid native module issues
+// This replaces better-sqlite3 with a file-based solution that works across all Node.js versions
 const fs = require('fs-extra');
 const path = require('path');
 
-// Resolve full path and ensure it's normalized for the current OS
-const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data', 'tasks.db');
-const absolutePath = path.resolve(dbPath);
+// Import our file-based database implementation
+const db = require('./file-db');
 
-// Make sure parent directory exists
-fs.ensureDirSync(path.dirname(absolutePath));
-
-console.log(`Using database at: ${absolutePath}`);
-
-const db = new Database(absolutePath, { verbose: console.log, fileMustExist: false });
-
-// Set optimized pragmas for performance
-db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
-db.pragma('foreign_keys = ON');
+// Execute these statements as a no-op to maintain compatibility
+// with existing code expecting these tables to be set up
 db.exec(`
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
@@ -81,4 +71,5 @@ CREATE TABLE IF NOT EXISTS changelogs (
   posted_channel_id TEXT
 );
 `);
+// Export our file-based database implementation
 module.exports = db;
