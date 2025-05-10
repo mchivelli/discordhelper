@@ -43,6 +43,10 @@ module.exports = {
       .addBooleanOption(o => 
         o.setName('aihelp')
         .setDescription('Use AI to suggest stages for this task')
+        .setRequired(false))
+      .addStringOption(o => 
+        o.setName('generate')
+        .setDescription('Instructions for AI stage generation (only works with aihelp enabled)')
         .setRequired(false)))
     .addSubcommand(sub => 
       sub.setName('add-stage')
@@ -166,7 +170,7 @@ module.exports = {
       try {
         // Query tasks based on partial ID match
         const tasks = db.prepare(
-          `SELECT id, name FROM tasks WHERE id LIKE ? OR name LIKE ? LIMIT 25`
+          `SELECT id, name FROM tasks WHERE id LIKE ? OR name LIKE ? ORDER BY created_at DESC LIMIT 25`
         ).all(`%${partialId}%`, `%${partialId}%`);
         
         choices = tasks.map(task => ({
@@ -174,19 +178,16 @@ module.exports = {
           value: task.id
         }));
         
-        // If we have very few or no matches from DB, add AI suggestions
-        if (choices.length < 3 && partialId.length > 0) {
-          try {
-            const suggestions = await getSuggestions(partialId, 'task name');
-            const suggestionChoices = suggestions.map(s => ({
-              name: `${s.value} (suggestion)`,
-              value: `t${Date.now()}_${s.value.substring(0, 10).replace(/\s+/g, '_').toLowerCase()}`
-            }));
-            choices = [...choices, ...suggestionChoices].slice(0, 25);
-          } catch (error) {
-            console.error('Error getting AI suggestions:', error);
-            // Continue without AI suggestions
-          }
+        // If no matches, show most recent tasks
+        if (choices.length === 0) {
+          const recentTasks = db.prepare(
+            `SELECT id, name FROM tasks ORDER BY created_at DESC LIMIT 10`
+          ).all();
+          
+          choices = recentTasks.map(task => ({
+            name: `${task.id}: ${task.name}`.substring(0, 100),
+            value: task.id
+          }));
         }
       } catch (err) {
         console.error('Error in autocomplete:', err);
@@ -219,6 +220,7 @@ module.exports = {
           const deadline = interaction.options.getString('deadline') || '';
           const templateId = interaction.options.getString('template');
           const useAI = interaction.options.getBoolean('aihelp') || false;
+          const generateInstructions = interaction.options.getString('generate') || '';
           
           // Generate unique ID if none provided
           const id = customId || `t${Date.now()}`;
@@ -267,8 +269,8 @@ module.exports = {
           // Use AI to suggest stages if requested
           else if (useAI) {
             try {
-              // Generate stage suggestions using AI with contents field
-              const suggestedStages = await generateTaskStages(name, contents || name, deadline);
+              // Generate stage suggestions using AI with contents field and optional generation instructions
+              const suggestedStages = await generateTaskStages(name, contents || name, deadline, generateInstructions);
               
               // Store suggestions in database
               const suggestionResult = db.prepare(
@@ -280,7 +282,7 @@ module.exports = {
               // Create embed to display suggestions
               const suggestionsEmbed = new EmbedBuilder()
                 .setTitle(`AI-Suggested Stages for "${name}"`)
-                .setDescription(`Here are stage suggestions based on your task description. You can accept all or selected ones.`)
+                .setDescription(`Here are stage suggestions based on your task description${generateInstructions ? ` with focus on: "${generateInstructions}"` : ''}. You can accept all or selected ones.`)
                 .setColor('#2196F3')
                 .setFooter({ text: 'Powered by AI' });
               
@@ -348,7 +350,7 @@ module.exports = {
           // Get task details
           const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
           if (!task) {
-            return interaction.reply({ content: `Task \`${id}\` not found.`, ephemeral: true });
+            return interaction.editReply(`❌ Task with ID \`${id}\` not found.`);
           }
           
           // Get stages for this task

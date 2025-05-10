@@ -206,11 +206,11 @@ client.on(Events.InteractionCreate, async interaction => {
       const customId = interaction.customId;
       
       // Handle task suggestion modifications
-      if (customId.startsWith('modify_')) {
+      if (customId.startsWith('modify_suggestions_')) {
         try {
           const parts = customId.split('_');
-          const taskId = parts[1];
-          const suggestionId = parts[2];
+          const taskId = parts[2];
+          const suggestionId = parts[3];
           
           // Get the original suggestions
           const suggestion = db.prepare('SELECT * FROM task_suggestions WHERE rowid = ?').get(suggestionId);
@@ -269,10 +269,16 @@ View with \`/task list id:${taskId}\`.`
           });
         } catch (error) {
           logger.error('Error processing modified stages:', error);
-          return interaction.reply({ 
-            content: `An error occurred: ${error.message}`, 
-            ephemeral: true 
-          });
+          if (interaction.deferred) {
+            return interaction.editReply({ 
+              content: `An error occurred: ${error.message}`
+            });
+          } else {
+            return interaction.reply({ 
+              content: `An error occurred: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
         }
       }
       

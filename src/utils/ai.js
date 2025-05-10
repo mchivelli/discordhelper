@@ -186,17 +186,24 @@ async function getSuggestions(partial, context) {
  * @param {string} taskName - Name of the task
  * @param {string} description - Description of the task
  * @param {string} deadline - Optional deadline
+ * @param {string} generateInstructions - Optional specific instructions for generation
  * @returns {Promise<Array>} - Array of suggested stage objects
  */
-async function generateTaskStages(taskName, description, deadline = '') {
+async function generateTaskStages(taskName, description, deadline = '', generateInstructions = '') {
+  let systemPrompt = 'You are a task management assistant for a Discord server. Generate 3-5 task stages that would help complete the given task successfully. Each stage should have a name and description. Add an emoji at the start of each stage name. Respond with a proper JSON array. Use different emojis for each stage.';
+  
+  if (generateInstructions) {
+    systemPrompt += ` Focus on the following specific instructions: ${generateInstructions}`;
+  }
+  
   const messages = [
     {
       role: 'system',
-      content: 'You are a task management assistant for a Discord server. Generate 5 task stages that would help complete the given task successfully. Each stage should have a name and description. Add an emoji at the start of each stage name. Respond with a proper JSON array. Use different emojis for each stage.'
+      content: systemPrompt
     },
     {
       role: 'user',
-      content: `Task: ${taskName}\nDescription: ${description}${deadline ? `\nDeadline: ${deadline}` : ''}\n\nPlease suggest 5 logical stages to complete this task. Format your response as a valid JSON array of objects, each with "name" and "description" properties. The name should start with an emoji. Do not use any text outside of the JSON array.`
+      content: `Task: ${taskName}\nDescription: ${description}${deadline ? `\nDeadline: ${deadline}` : ''}\n\nPlease suggest logical stages to complete this task. Format your response as a valid JSON array of objects, each with "name" and "description" properties. The name should start with an emoji. Do not use any text outside of the JSON array.`
     }
   ];
   
