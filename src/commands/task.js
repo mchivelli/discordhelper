@@ -17,12 +17,12 @@ module.exports = {
         .setDescription('Name of the task (e.g., "Website Redesign")')
         .setRequired(true))
       .addStringOption(o => 
-        o.setName('id')
-        .setDescription('Optional custom ID for the task')
-        .setRequired(false))
-      .addStringOption(o => 
         o.setName('contents')
         .setDescription('Detailed description of what the task involves')
+        .setRequired(false))
+      .addStringOption(o => 
+        o.setName('id')
+        .setDescription('Optional custom ID for the task')
         .setRequired(false))
       .addStringOption(o => 
         o.setName('deadline')
