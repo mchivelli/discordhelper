@@ -212,7 +212,8 @@ client.on(Events.InteractionCreate, async interaction => {
         try {
           const parts = customId.split('_');
           const taskId = parts[2];
-          const suggestionId = parts[3];
+          // Reconstruct the suggestion ID from remaining parts (handles IDs with underscores)
+          const suggestionId = parts.slice(3).join('_');
           
           // Get the original suggestions
           const suggestion = db.prepare('SELECT * FROM task_suggestions WHERE id = ?').get(suggestionId);
@@ -644,11 +645,16 @@ View with \`/task list id:${taskId}\`.`
         // Handle AI-generated stage suggestions
         if (taskAction === 'accept') {
           try {
-            const suggestionId = customIdParts[2];
+            // Reconstruct the suggestion ID from parts (handles IDs with underscores)
+            const suggestionId = customIdParts.slice(2).join('_');
+            console.log(`Looking for suggestion with ID: ${suggestionId}`);
             
             // Get the suggested stages from the database
             const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE id = ?').get(suggestionId);
             if (!suggestion) {
+              // Debug: List all suggestions to see what's actually in the database
+              const allSuggestions = db.prepare('SELECT id, task_id FROM task_suggestions').all();
+              console.log('All suggestions in database:', allSuggestions);
               return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
             }
             
@@ -709,12 +715,17 @@ View stages with \`/task list id:${taskId}\`.`,
         // Handle modify stages request
         else if (taskAction === 'modify') {
           try {
-            const suggestionId = customIdParts[2];
+            // Reconstruct the suggestion ID from parts (handles IDs with underscores)
+            const suggestionId = customIdParts.slice(2).join('_');
             console.log('Modify button pressed. customId parts:', customIdParts);
+            console.log(`Looking for suggestion with ID: ${suggestionId}`);
             
             // Get the suggested stages from the database
             const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE id = ?').get(suggestionId);
             if (!suggestion) {
+              // Debug: List all suggestions to see what's actually in the database
+              const allSuggestions = db.prepare('SELECT id, task_id FROM task_suggestions').all();
+              console.log('All suggestions in database:', allSuggestions);
               return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
             }
             
@@ -738,7 +749,8 @@ View stages with \`/task list id:${taskId}\`.`,
         // Handle skip AI stages
         else if (taskAction === 'skip') {
           try {
-            const suggestionId = customIdParts[2];
+            // Reconstruct the suggestion ID from parts (handles IDs with underscores)
+            const suggestionId = customIdParts.slice(2).join('_');
             
             // Update suggestion status
             db.prepare('UPDATE task_suggestions SET status = ? WHERE id = ?').run('skipped', suggestionId);
