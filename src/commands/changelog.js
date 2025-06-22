@@ -93,7 +93,7 @@ module.exports = {
   async execute(interaction) {
     try {
       // Check for required permissions
-      if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
+      if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
         return interaction.reply({
           content: 'You need Manage Messages permission to use changelog commands.',
           ephemeral: true

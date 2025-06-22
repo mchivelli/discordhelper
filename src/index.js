@@ -637,6 +637,7 @@ View with \`/task list id:${taskId}\`.`
       
       // Handle task-related buttons
       if (['accept', 'modify', 'skip', 'advance', 'view', 'create'].includes(buttonAction)) {
+        let handledByFirstHandler = false;
         const taskAction = customIdParts[0];
         let taskId = customIdParts[1];
         
@@ -649,6 +650,7 @@ View with \`/task list id:${taskId}\`.`
         
         // Handle AI-generated stage suggestions
         if (taskAction === 'accept') {
+          handledByFirstHandler = true;
           try {
             // Check if interaction has already been replied to
             if (interaction.replied || interaction.deferred) {
@@ -735,6 +737,7 @@ View stages with \`/task list id:${taskId}\`.`,
         
         // Handle modify stages request
         else if (taskAction === 'modify') {
+          handledByFirstHandler = true;
           try {
             // Check if interaction has already been replied to
             if (interaction.replied || interaction.deferred) {
@@ -775,6 +778,7 @@ View stages with \`/task list id:${taskId}\`.`,
         
         // Handle skip AI stages
         else if (taskAction === 'skip') {
+          handledByFirstHandler = true;
           try {
             // Reconstruct the suggestion ID from parts (handles IDs with underscores)
             const suggestionId = customIdParts.slice(2).join('_');
@@ -802,6 +806,7 @@ Add stages manually with \`/task add-stage\`.`,
         
         // Handle advance with notes
         else if (taskAction === 'advance' && customIdParts[1] === 'notes') {
+          handledByFirstHandler = true;
           try {
             const stageIdx = parseInt(customIdParts[3]);
             
@@ -848,6 +853,7 @@ Add stages manually with \`/task add-stage\`.`,
         
         // Handle simple advance (without notes)
         else if (taskAction === 'advance' && customIdParts[1] === 'simple') {
+          handledByFirstHandler = true;
           try {
             const stageIdx = parseInt(customIdParts[3]);
             console.log(`DEBUG: Advance simple handler - customIdParts:`, customIdParts);
@@ -970,6 +976,7 @@ Add stages manually with \`/task add-stage\`.`,
         
         // Handle view task
         else if (taskAction === 'view') {
+          handledByFirstHandler = true;
           const command = client.commands.get('task');
           if (command) {
             // Create a synthetic interaction to pass to the task list command
@@ -1001,6 +1008,7 @@ Add stages manually with \`/task add-stage\`.`,
         
         // Handle create follow-up task
         else if (taskAction === 'create' && customIdParts[1] === 'followup') {
+          handledByFirstHandler = true;
           try {
             const originalTaskId = customIdParts[2];
             
@@ -1056,8 +1064,10 @@ Add stages manually with \`/task add-stage\`.`,
         }
       }
       
-      // If we reach here, the first button handler processed the button, so return early
-      return;
+      // If we reach here, only return early if the first handler actually processed the button
+      if (handledByFirstHandler) {
+        return;
+      }
     }
     
     // Handle other button interactions that don't match the first handler

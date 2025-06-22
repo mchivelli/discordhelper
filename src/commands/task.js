@@ -274,7 +274,7 @@ module.exports = {
   
   async execute(interaction) {
     // Check if user has admin permissions before allowing command execution
-    if (!interaction.member.permissions.has('ADMINISTRATOR')) {
+    if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)) {
       return interaction.reply({
         content: '⛔ This command is restricted to server administrators only.',
         ephemeral: true
