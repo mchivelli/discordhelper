@@ -223,9 +223,14 @@ class QueryBuilder {
     // Handle common SELECT patterns
     if (this.query.toLowerCase().includes('where id =')) {
       const result = items.find(item => item.id === params[0]) || null;
-      if (this.tableName === 'task_suggestions' && !result) {
+      if (this.tableName === 'task_suggestions') {
         console.log(`DEBUG: Looking for suggestion ID "${params[0]}" in table ${this.tableName}`);
-        console.log('Available IDs:', items.map(item => item.id));
+        console.log('Available suggestions:', items.map(item => ({id: item.id, task_id: item.task_id})));
+        if (!result) {
+          console.log('SUGGESTION NOT FOUND!');
+        } else {
+          console.log('Found suggestion:', result);
+        }
       }
       return result;
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('and idx =')) {

@@ -487,7 +487,7 @@ module.exports = {
             }
           }
           
-          return interaction.reply({ embeds: [embed], components });
+          return interaction.editReply({ embeds: [embed], components });
         } catch (error) {
           logger.error('Error listing task:', error);
           if (interaction.deferred) {
@@ -726,7 +726,7 @@ module.exports = {
             'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage > 0 AND completion_percentage < 100'
           ).get(guildId);
           const notStartedTasksResult = db.prepare(
-            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage = 0'
+            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND (completion_percentage = 0 OR completion_percentage IS NULL)'
           ).get(guildId);
           
           const totalTasks = totalTasksResult ? totalTasksResult.count : 0;
@@ -814,6 +814,7 @@ module.exports = {
             await interaction.reply({ content: '❌ An error occurred while generating analytics: ' + error.message, ephemeral: true });
           }
         }
+        break;
       }
       case 'remove': {
         try {
