@@ -502,6 +502,7 @@ module.exports = {
             });
           }
         }
+        break;
       }
       case 'advance': {
         try {
@@ -608,6 +609,7 @@ module.exports = {
             });
           }
         }
+        break;
       }
       case 'assign': {
         try {

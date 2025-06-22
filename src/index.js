@@ -638,7 +638,12 @@ View with \`/task list id:${taskId}\`.`
       // Handle task-related buttons
       if (['accept', 'modify', 'skip', 'advance', 'view', 'create'].includes(buttonAction)) {
         const taskAction = customIdParts[0];
-        const taskId = customIdParts[1];
+        let taskId = customIdParts[1];
+        
+        // Special handling for advance buttons which have format: advance_notes_taskId_stageIdx or advance_simple_taskId_stageIdx
+        if (taskAction === 'advance' && (customIdParts[1] === 'notes' || customIdParts[1] === 'simple')) {
+          taskId = customIdParts[2]; // The actual task ID is in position 2
+        }
         
         console.log(`Button pressed: ${taskAction}, taskId: ${taskId}, full customId: ${interaction.customId}`);
         
@@ -786,7 +791,7 @@ Add stages manually with \`/task add-stage\`.`,
         }
         
         // Handle advance with notes
-        else if (taskAction === 'advance' && customIdParts[2] === 'notes') {
+        else if (taskAction === 'advance' && customIdParts[1] === 'notes') {
           try {
             const stageIdx = parseInt(customIdParts[3]);
             
@@ -832,7 +837,7 @@ Add stages manually with \`/task add-stage\`.`,
         }
         
         // Handle simple advance (without notes)
-        else if (taskAction === 'advance' && customIdParts[2] === 'simple') {
+        else if (taskAction === 'advance' && customIdParts[1] === 'simple') {
           try {
             const stageIdx = parseInt(customIdParts[3]);
             
