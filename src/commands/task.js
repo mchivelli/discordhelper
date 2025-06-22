@@ -735,16 +735,9 @@ module.exports = {
           // Calculate completion rate
           const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
           
-          // Get recently completed tasks
-          const recentCompletions = db.prepare(
-            `SELECT t.id, t.name, t.completion_percentage, s.completed_at
-             FROM tasks t
-             JOIN stages s ON t.id = s.task_id
-             WHERE t.guild_id = ? AND s.completed_at > ? AND s.done = 1
-             GROUP BY t.id
-             ORDER BY s.completed_at DESC
-             LIMIT 5`
-          ).all(guildId, oneWeekAgo);
+          // Get recently completed tasks (simplified for file-based database)
+          const allTasks = db.prepare('SELECT id, name, completion_percentage FROM tasks WHERE guild_id = ?').all(guildId);
+          const recentCompletions = allTasks.filter(task => task.completion_percentage === 100).slice(0, 5);
           
           // Get upcoming deadlines
           const upcomingDeadlines = db.prepare(
@@ -784,8 +777,8 @@ module.exports = {
           if (recentCompletions.length > 0) {
             let recentCompStr = '';
             recentCompletions.forEach(task => {
-              const completeDate = new Date(task.completed_at).toLocaleDateString();
-              recentCompStr += `\n• \`${task.id}\` **${task.name}** - ${completeDate}`;
+              // For simplified query, just show "Recently completed"
+              recentCompStr += `\n• \`${task.id}\` **${task.name}** - Recently completed`;
             });
             analyticsEmbed.addFields({ name: '🎉 Recent Task Completions', value: recentCompStr || 'None' });
           }
@@ -876,123 +869,6 @@ module.exports = {
           .setFooter({ text: 'AI-enhanced task management system', iconURL: interaction.client.user.displayAvatarURL() });
         
         return interaction.reply({ embeds: [helpEmbed] });
-      }
-      case 'analytics': {
-        try {
-          await interaction.deferReply();
-          
-          // Get guild ID for server-specific analytics
-          const guildId = interaction.guildId;
-          
-          // Get current timestamp for date calculations
-          const now = Date.now();
-          const oneWeekAgo = now - (7 * 24 * 60 * 60 * 1000);
-          const oneMonthAgo = now - (30 * 24 * 60 * 60 * 1000);
-          
-          // Get overall task stats
-          const totalTasksResult = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE guild_id = ?').get(guildId);
-          const completedTasksResult = db.prepare(
-            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage = 100'
-          ).get(guildId);
-          const inProgressTasksResult = db.prepare(
-            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage > 0 AND completion_percentage < 100'
-          ).get(guildId);
-          const notStartedTasksResult = db.prepare(
-            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage = 0'
-          ).get(guildId);
-          
-          const totalTasks = totalTasksResult ? totalTasksResult.count : 0;
-          const completedTasks = completedTasksResult ? completedTasksResult.count : 0;
-          const inProgressTasks = inProgressTasksResult ? inProgressTasksResult.count : 0;
-          const notStartedTasks = notStartedTasksResult ? notStartedTasksResult.count : 0;
-          
-          // Calculate completion rate
-          const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-          
-          // Get recently completed tasks
-          const recentCompletions = db.prepare(
-            `SELECT t.id, t.name, t.completion_percentage, s.completed_at
-             FROM tasks t
-             JOIN stages s ON t.id = s.task_id
-             WHERE t.guild_id = ? AND s.completed_at > ? AND s.done = 1
-             GROUP BY t.id
-             ORDER BY s.completed_at DESC
-             LIMIT 5`
-          ).all(guildId, oneWeekAgo);
-          
-          // Get upcoming deadlines
-          const upcomingDeadlines = db.prepare(
-            `SELECT id, name, deadline, completion_percentage
-             FROM tasks
-             WHERE guild_id = ? AND deadline IS NOT NULL AND deadline != ''
-               AND (completion_percentage < 100 OR completion_percentage IS NULL)
-             ORDER BY
-               CASE
-                 WHEN deadline LIKE '%-%' THEN date(deadline)
-                 WHEN deadline LIKE '%.%.%' THEN date(substr(deadline, 7, 4) || '-' || substr(deadline, 4, 2) || '-' || substr(deadline, 1, 2))
-                 ELSE date(deadline)
-               END ASC
-             LIMIT 5`
-          ).all(guildId);
-          
-          // Create main embed for overall analytics
-          const analyticsEmbed = new EmbedBuilder()
-            .setTitle('📊 Task Analytics Dashboard')
-            .setDescription(`Task statistics for this server`)
-            .setColor(0x3498db)
-            .setTimestamp()
-            .addFields(
-              { name: '📋 Total Tasks', value: `${totalTasks}`, inline: true },
-              { name: '✅ Completed', value: `${completedTasks} (${completionRate}%)`, inline: true },
-              { name: '⏱️ In Progress', value: `${inProgressTasks}`, inline: true },
-              { name: '🆕 Not Started', value: `${notStartedTasks}`, inline: true }
-            );
-          
-          // Add visual completion rate bar
-          analyticsEmbed.addFields({
-            name: '📈 Task Completion Rate',
-            value: this.createProgressBar(completionRate)
-          });
-          
-          // Add recent completions if any
-          if (recentCompletions.length > 0) {
-            let recentCompStr = '';
-            recentCompletions.forEach(task => {
-              const completeDate = new Date(task.completed_at).toLocaleDateString();
-              recentCompStr += `\n• \`${task.id}\` **${task.name}** - ${completeDate}`;
-            });
-            analyticsEmbed.addFields({ name: '🎉 Recent Task Completions', value: recentCompStr || 'None' });
-          }
-          
-          // Create embed for upcoming deadlines
-          const deadlinesEmbed = new EmbedBuilder()
-            .setTitle('⏰ Upcoming Deadlines')
-            .setDescription('Tasks with approaching deadlines')
-            .setColor(0xe74c3c);
-          
-          if (upcomingDeadlines.length > 0) {
-            let deadlinesStr = '';
-            upcomingDeadlines.forEach(task => {
-              const formattedDate = this.formatDate(task.deadline);
-              const progressBar = this.createProgressBar(task.completion_percentage || 0);
-              deadlinesStr += `\n• \`${task.id}\` **${task.name}**\n  ${formattedDate}\n  ${progressBar}`;
-            });
-            deadlinesEmbed.setDescription(deadlinesStr);
-          } else {
-            deadlinesEmbed.setDescription('No upcoming deadlines found');
-          }
-          
-          // Respond with embeds
-          await interaction.editReply({ embeds: [analyticsEmbed, deadlinesEmbed] });
-          
-        } catch (error) {
-          logger.error('Error generating analytics:', error);
-          if (interaction.deferred) {
-            await interaction.editReply('❌ An error occurred while generating analytics: ' + error.message);
-          } else {
-            await interaction.reply({ content: '❌ An error occurred while generating analytics: ' + error.message, ephemeral: true });
-          }
-        }
       }
       case 'faction': {
         try {

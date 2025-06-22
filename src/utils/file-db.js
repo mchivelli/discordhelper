@@ -187,11 +187,19 @@ class QueryBuilder {
       } else if (this.query.toLowerCase().includes('done = 1')) {
         count = items.filter(item => item.task_id === param && item.done === 1).length;
       } else if (this.query.toLowerCase().includes('completion_percentage = 100')) {
-        count = items.filter(item => item.guild_id === param && item.completion_percentage === 100).length;
+        count = items.filter(item => item.guild_id === param && (item.completion_percentage === 100)).length;
       } else if (this.query.toLowerCase().includes('completion_percentage > 0 and completion_percentage < 100')) {
-        count = items.filter(item => item.guild_id === param && item.completion_percentage > 0 && item.completion_percentage < 100).length;
+        count = items.filter(item => 
+          item.guild_id === param && 
+          item.completion_percentage != null && 
+          item.completion_percentage > 0 && 
+          item.completion_percentage < 100
+        ).length;
       } else if (this.query.toLowerCase().includes('completion_percentage = 0')) {
-        count = items.filter(item => item.guild_id === param && item.completion_percentage === 0).length;
+        count = items.filter(item => 
+          item.guild_id === param && 
+          (item.completion_percentage === 0 || item.completion_percentage == null)
+        ).length;
       } else {
         // Generic filter
         count = items.length;
@@ -250,6 +258,9 @@ class QueryBuilder {
         filtered = items.filter(item => item.guild_id === params[0]);
       } else if (this.query.toLowerCase().includes('deadline is not null')) {
         filtered = items.filter(item => item.guild_id === params[0] && item.deadline && item.deadline !== '');
+      } else if (this.query.toLowerCase().includes('where guild_id =')) {
+        // Handle "SELECT * FROM tasks WHERE guild_id = ?" pattern
+        filtered = items.filter(item => item.guild_id === params[0]);
       }
       
       // Handle ORDER BY
