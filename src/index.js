@@ -645,6 +645,12 @@ View with \`/task list id:${taskId}\`.`
         // Handle AI-generated stage suggestions
         if (taskAction === 'accept') {
           try {
+            // Check if interaction has already been replied to
+            if (interaction.replied || interaction.deferred) {
+              console.log('Accept button interaction already handled, skipping');
+              return;
+            }
+            
             // Reconstruct the suggestion ID from parts (handles IDs with underscores)
             const suggestionId = customIdParts.slice(2).join('_');
             console.log(`Looking for suggestion with ID: ${suggestionId}`);
@@ -715,6 +721,12 @@ View stages with \`/task list id:${taskId}\`.`,
         // Handle modify stages request
         else if (taskAction === 'modify') {
           try {
+            // Check if interaction has already been replied to
+            if (interaction.replied || interaction.deferred) {
+              console.log('Modify button interaction already handled, skipping');
+              return;
+            }
+            
             // Reconstruct the suggestion ID from parts (handles IDs with underscores)
             const suggestionId = customIdParts.slice(2).join('_');
             console.log('Modify button pressed. customId parts:', customIdParts);

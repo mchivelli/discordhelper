@@ -222,7 +222,12 @@ class QueryBuilder {
     
     // Handle common SELECT patterns
     if (this.query.toLowerCase().includes('where id =')) {
-      return items.find(item => item.id === params[0]) || null;
+      const result = items.find(item => item.id === params[0]) || null;
+      if (this.tableName === 'task_suggestions' && !result) {
+        console.log(`DEBUG: Looking for suggestion ID "${params[0]}" in table ${this.tableName}`);
+        console.log('Available IDs:', items.map(item => item.id));
+      }
+      return result;
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('and idx =')) {
       return items.find(item => item.task_id === params[0] && item.idx === parseInt(params[1])) || null;
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('and done = 0')) {
