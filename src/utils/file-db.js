@@ -88,7 +88,9 @@ function saveItem(tableName, item) {
     
   const filePath = path.join(TABLES[tableName], fileName);
   
+  console.log(`DEBUG: Saving ${tableName} item to ${filePath}:`, item);
   fs.writeJsonSync(filePath, item, { spaces: 2 });
+  console.log(`DEBUG: Successfully saved ${tableName} item to disk`);
   
   // Update cache
   const cacheKey = tableName === 'bot_settings' ? item.key : item.id;
@@ -239,16 +241,25 @@ class QueryBuilder {
       return items.find(item => item.task_id === params[0] && item.done === 0) || null;
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('order by idx')) {
       let filtered = items.filter(item => item.task_id === params[0]);
+      console.log(`DEBUG: Initial filtered stages for taskId ${params[0]}:`, filtered.length);
       
       // Apply done=0 filter if present
       if (this.query.toLowerCase().includes('and done = 0')) {
-        filtered = filtered.filter(item => item.done === 0);
+        console.log(`DEBUG: Before done=0 filter:`, filtered.map(item => ({id: item.id, idx: item.idx, done: item.done, doneType: typeof item.done})));
+        filtered = filtered.filter(item => {
+          const result = item.done === 0 || item.done === '0';
+          console.log(`DEBUG: Item ${item.id} done=${item.done} (${typeof item.done}) => ${result}`);
+          return result;
+        });
+        console.log(`DEBUG: After done=0 filter:`, filtered.length);
       }
       
       // Sort by idx
       filtered.sort((a, b) => (a.idx || 0) - (b.idx || 0));
       
-      return filtered[0] || null;
+      const result = filtered[0] || null;
+      console.log(`DEBUG: Final result for task ${params[0]}:`, result);
+      return result;
     } else if (this.query.toLowerCase().includes('where rowid =')) {
       return items.find(item => item.id === params[0]) || null;
     }
@@ -340,19 +351,22 @@ class QueryBuilder {
           if (args.length >= 4) {
             // Use composite key for stages
             const id = `${args[0]}_${args[1]}`;
+            // Standard INSERT: task_id, idx, name, desc, created_at
             item = {
               id: id,
               task_id: args[0],
               idx: parseInt(args[1]) || 0, // Ensure idx is a number
               name: args[2],
               desc: args[3],
-              assignee: args[4] || null,
-              done: parseInt(args[5]) || 0, // Ensure done is a number
-              created_at: args[6] || Date.now(),
-              completed_at: args[7] || null,
-              completion_notes: args[8] || null,
-              due_date: args[9] || null
+              assignee: null, // New stages have no assignee initially
+              done: 0, // New stages are not done
+              created_at: args[4] || Date.now(),
+              completed_at: null,
+              completion_notes: null,
+              due_date: null
             };
+            console.log(`DEBUG: Creating stage with args:`, args);
+            console.log(`DEBUG: Created stage item:`, item);
           }
           break;
         case 'task_suggestions':
