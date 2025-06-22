@@ -1099,11 +1099,31 @@ module.exports = {
         return interaction.editReply('❌ I need **Manage Nicknames** permission to update member nicknames.');
       }
       
-      // Create the faction role (position it below bot's highest role)
+      // Check if bot role is high enough to manage target members
+      const targetMemberIds = membersString.match(/\d{17,19}/g) || [];
+      let hierarchyWarning = '';
+      
+      for (const memberId of targetMemberIds) {
+        try {
+          const member = await interaction.guild.members.fetch(memberId);
+          if (member.roles.highest.position >= botMember.roles.highest.position && member.id !== interaction.guild.ownerId) {
+            hierarchyWarning += `⚠️ Cannot manage ${member.displayName} - their role is higher than mine\n`;
+          }
+        } catch (error) {
+          // Member not found, will be handled later
+        }
+      }
+      
+      if (hierarchyWarning) {
+        hierarchyWarning += `\n**Solution:** Move my role higher in Server Settings > Roles, or have an admin create the faction.\n`;
+      }
+      
+      // Create the faction role at a high position (below bot's highest role)
+      const targetPosition = Math.max(1, botMember.roles.highest.position - 1);
       const role = await interaction.guild.roles.create({
         name: factionName,
         color: colorHex,
-        position: Math.max(0, botMember.roles.highest.position - 1),
+        position: targetPosition,
         reason: `Faction created by ${interaction.user.tag} via Task Bot`
       });
       
@@ -1119,32 +1139,33 @@ module.exports = {
         try {
           const member = await interaction.guild.members.fetch(memberId);
           
-          // Check bot permissions vs user hierarchy
-          const botMember = interaction.guild.members.me;
-          if (member.roles.highest.position >= botMember.roles.highest.position && member.id !== interaction.guild.ownerId) {
-            memberDetails.push(`❌ ${member.displayName} (hierarchy - user role too high)`);
-            failCount++;
-            continue;
-          }
-          
+          // Try to add the role first (this might work even if nickname doesn't)
           await member.roles.add(role);
           
-          // Update nickname with faction prefix (skip if bot can't manage nicknames)
-          try {
-            const currentName = member.displayName;
-            const cleanName = currentName.replace(/^\[.*?\]\s*/, '');
-            const newNickname = `[${abbreviation}] ${cleanName}`;
-            
-            // Discord nickname limit is 32 characters
-            const truncatedNickname = newNickname.length > 32 ? 
-              `[${abbreviation}] ${cleanName.substring(0, 32 - abbreviation.length - 3)}` : 
-              newNickname;
-            
-            await member.setNickname(truncatedNickname);
-            memberDetails.push(`✅ ${member.displayName} (role + nickname)`);
-          } catch (nicknameError) {
-            // Role was added but nickname failed
-            memberDetails.push(`⚠️ ${member.displayName} (role added, nickname failed)`);
+          // Update nickname with faction prefix (skip if bot can't manage this user's nickname)
+          const botMember = interaction.guild.members.me;
+          const canManageNickname = member.roles.highest.position < botMember.roles.highest.position || member.id === interaction.guild.ownerId;
+          
+          if (canManageNickname) {
+            try {
+              const currentName = member.displayName;
+              const cleanName = currentName.replace(/^\[.*?\]\s*/, '');
+              const newNickname = `[${abbreviation}] ${cleanName}`;
+              
+              // Discord nickname limit is 32 characters
+              const truncatedNickname = newNickname.length > 32 ? 
+                `[${abbreviation}] ${cleanName.substring(0, 32 - abbreviation.length - 3)}` : 
+                newNickname;
+              
+              await member.setNickname(truncatedNickname);
+              memberDetails.push(`✅ ${member.displayName} (role + nickname)`);
+            } catch (nicknameError) {
+              // Role was added but nickname failed for other reasons
+              memberDetails.push(`⚠️ ${member.displayName} (role added, nickname failed)`);
+            }
+          } else {
+            // Role was added but can't change nickname due to hierarchy
+            memberDetails.push(`⚠️ ${member.displayName} (role added, can't change nickname - role too high)`);
           }
           
           successCount++;
@@ -1170,6 +1191,14 @@ module.exports = {
         )
         .setFooter({ text: `Faction ID: ${role.id}` })
         .setTimestamp();
+      
+      // Add hierarchy warning if needed
+      if (hierarchyWarning) {
+        embed.addFields({
+          name: '⚠️ Role Hierarchy Issues',
+          value: hierarchyWarning
+        });
+      }
       
       // Add faction channel message
       embed.addFields({
@@ -1292,32 +1321,33 @@ module.exports = {
             continue;
           }
           
-          // Check bot permissions vs user hierarchy
-          const botMember = interaction.guild.members.me;
-          if (member.roles.highest.position >= botMember.roles.highest.position && member.id !== interaction.guild.ownerId) {
-            memberDetails.push(`❌ ${member.displayName} (hierarchy - user role too high)`);
-            failCount++;
-            continue;
-          }
-          
+          // Try to add the role first (this might work even if nickname doesn't)
           await member.roles.add(role);
           
-          // Update nickname with faction prefix (skip if bot can't manage nicknames)
-          try {
-            const currentName = member.displayName;
-            const cleanName = currentName.replace(/^\[.*?\]\s*/, '');
-            const newNickname = `[${abbreviation}] ${cleanName}`;
-            
-            // Discord nickname limit is 32 characters
-            const truncatedNickname = newNickname.length > 32 ? 
-              `[${abbreviation}] ${cleanName.substring(0, 32 - abbreviation.length - 3)}` : 
-              newNickname;
-            
-            await member.setNickname(truncatedNickname);
-            memberDetails.push(`✅ ${member.displayName} (role + nickname)`);
-          } catch (nicknameError) {
-            // Role was added but nickname failed
-            memberDetails.push(`⚠️ ${member.displayName} (role added, nickname failed)`);
+          // Update nickname with faction prefix (skip if bot can't manage this user's nickname)
+          const botMember = interaction.guild.members.me;
+          const canManageNickname = member.roles.highest.position < botMember.roles.highest.position || member.id === interaction.guild.ownerId;
+          
+          if (canManageNickname) {
+            try {
+              const currentName = member.displayName;
+              const cleanName = currentName.replace(/^\[.*?\]\s*/, '');
+              const newNickname = `[${abbreviation}] ${cleanName}`;
+              
+              // Discord nickname limit is 32 characters
+              const truncatedNickname = newNickname.length > 32 ? 
+                `[${abbreviation}] ${cleanName.substring(0, 32 - abbreviation.length - 3)}` : 
+                newNickname;
+              
+              await member.setNickname(truncatedNickname);
+              memberDetails.push(`✅ ${member.displayName} (role + nickname)`);
+            } catch (nicknameError) {
+              // Role was added but nickname failed for other reasons
+              memberDetails.push(`⚠️ ${member.displayName} (role added, nickname failed)`);
+            }
+          } else {
+            // Role was added but can't change nickname due to hierarchy
+            memberDetails.push(`⚠️ ${member.displayName} (role added, can't change nickname - role too high)`);
           }
           
           successCount++;
