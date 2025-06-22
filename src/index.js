@@ -1054,31 +1054,73 @@ Add stages manually with \`/task add-stage\`.`,
       }
       
       // Handle original button interactions
-      const [oldAction, id] = interaction.customId.split('_');
+      const parts = interaction.customId.split('_');
+      const oldAction = parts[0];
       
       if (oldAction === 'advance') {
+        let id, stageIdx;
+        
+        // Handle different button formats:
+        // Old format: advance_TaskId
+        // New format: advance_simple_TaskId_StageIdx or advance_notes_TaskId_StageIdx
+        if (parts.length === 2) {
+          // Old format: advance_TaskId
+          id = parts[1];
+        } else if (parts.length >= 4) {
+          // New format: advance_simple_TaskId_StageIdx or advance_notes_TaskId_StageIdx
+          id = parts[2];
+          stageIdx = parseInt(parts[3]);
+        } else {
+          await interaction.reply({ content: 'Invalid button format', ephemeral: true });
+          return;
+        }
         // Get the next stage
         const next = db.prepare('SELECT * FROM stages WHERE task_id=? AND done=0 ORDER BY idx').get(id);
+        console.log(`DEBUG: Looking for next stage for task ${id}`);
+        console.log(`DEBUG: Found next stage:`, next);
+        
+        // Also check all stages for debugging
+        const allStages = db.prepare('SELECT * FROM stages WHERE task_id=? ORDER BY idx').all(id);
+        console.log(`DEBUG: All stages for task ${id}:`, allStages);
+        
         if (!next) {
           await interaction.reply({ content: 'All stages done 🎉', ephemeral: true });
           return;
         }
         
         // Mark current stage as done
-        db.prepare('UPDATE stages SET done=1 WHERE task_id=? AND idx=?').run(id, next.idx);
+        console.log(`DEBUG: Marking stage ${next.idx} as complete for task ${id}`);
+        const updateResult = db.prepare('UPDATE stages SET done=1 WHERE task_id=? AND idx=?').run(id, next.idx);
+        console.log(`DEBUG: Update result:`, updateResult);
+        
+        // Get task info for better display
+        const task = db.prepare('SELECT * FROM tasks WHERE id=?').get(id);
+        const taskName = task ? task.name : id;
         
         // Get the next upcoming stage
         const upcoming = db.prepare('SELECT * FROM stages WHERE task_id=? AND done=0 ORDER BY idx').get(id);
         if (upcoming) {
-          const prereq = await getPrereqs(`Task ${id}`, upcoming.name, upcoming.desc);
-          await interaction.reply({ content: `Advanced to **${upcoming.name}**. Prereqs:\n${prereq}` });
+          await interaction.reply({ 
+            content: `✅ **${next.name}** completed!\n\n📋 **Task:** ${taskName}\n🔄 **Next Stage:** ${upcoming.name}\n📝 **Description:** ${upcoming.desc || 'No description'}`,
+            ephemeral: true
+          });
         } else {
-          await interaction.reply('🎉 All stages completed!');
+          await interaction.reply({ 
+            content: `✅ **${next.name}** completed!\n\n🎉 **Task "${taskName}" is now complete!** All stages finished.`,
+            ephemeral: true
+          });
         }
         return;
       }
       
       if (oldAction === 'details') {
+        // Parse ID for details button (format: details_TaskId)
+        const id = parts.length >= 2 ? parts[1] : null;
+        if (!id) {
+          await interaction.reply({ content: 'Invalid button format', ephemeral: true });
+          return;
+        }
+        
         // Get all stages for the task
         const task = db.prepare('SELECT * FROM tasks WHERE id=?').get(id);
         const stages = db.prepare('SELECT * FROM stages WHERE task_id=? ORDER BY idx').all(id);
@@ -1099,6 +1141,13 @@ Add stages manually with \`/task add-stage\`.`,
       }
       
       if (oldAction === 'view') {
+        // Parse ID for view button (format: view_TaskId)
+        const id = parts.length >= 2 ? parts[1] : null;
+        if (!id) {
+          await interaction.reply({ content: 'Invalid button format', ephemeral: true });
+          return;
+        }
+        
         // Handle view task button - redirect to list command functionality
         try {
           // Get task details

@@ -238,11 +238,17 @@ class QueryBuilder {
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('and done = 0')) {
       return items.find(item => item.task_id === params[0] && item.done === 0) || null;
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('order by idx')) {
-      const filtered = items.filter(item => item.task_id === params[0]);
-      filtered.sort((a, b) => a.idx - b.idx);
-      return this.query.toLowerCase().includes('and done = 0') 
-        ? filtered.find(item => item.done === 0) || null
-        : filtered[0] || null;
+      let filtered = items.filter(item => item.task_id === params[0]);
+      
+      // Apply done=0 filter if present
+      if (this.query.toLowerCase().includes('and done = 0')) {
+        filtered = filtered.filter(item => item.done === 0);
+      }
+      
+      // Sort by idx
+      filtered.sort((a, b) => (a.idx || 0) - (b.idx || 0));
+      
+      return filtered[0] || null;
     } else if (this.query.toLowerCase().includes('where rowid =')) {
       return items.find(item => item.id === params[0]) || null;
     }
@@ -459,15 +465,23 @@ class QueryBuilder {
         updatedCount = 1;
       }
     } else if (this.query.toLowerCase().includes('set done = 1') && this.query.toLowerCase().includes('where task_id =')) {
-      const taskId = args[2];
-      const idx = parseInt(args[3]);
+      // Handle: UPDATE stages SET done=1 WHERE task_id=? AND idx=?
+      // Parameters: [taskId, idx]
+      const taskId = args[0];
+      const idx = parseInt(args[1]);
+      console.log(`DEBUG: Updating stage done=1 for taskId=${taskId}, idx=${idx}`);
+      
       const item = items.find(i => i.task_id === taskId && i.idx === idx);
       if (item) {
+        console.log(`DEBUG: Found stage to update:`, item);
         item.done = 1;
-        item.completed_at = args[0];
-        if (args[1]) item.completion_notes = args[1];
+        item.completed_at = Date.now();
         saveItem(this.tableName, item);
         updatedCount = 1;
+        console.log(`DEBUG: Updated stage to done=1:`, item);
+      } else {
+        console.log(`DEBUG: No stage found with taskId=${taskId} and idx=${idx}`);
+        console.log(`DEBUG: Available stages:`, items.filter(i => i.task_id === taskId));
       }
     } else if (this.query.toLowerCase().includes('set status =') && (this.query.toLowerCase().includes('where rowid =') || this.query.toLowerCase().includes('where id ='))) {
       const status = args[0];
