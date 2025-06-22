@@ -695,8 +695,8 @@ View with \`/task list id:${taskId}\`.`
             console.log(`DEBUG: About to insert ${suggestedStages.length} stages for task ${taskId}`);
             for (let i = 0; i < suggestedStages.length; i++) {
               const stage = suggestedStages[i];
-              const idxResult = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId);
-              const idx = idxResult ? idxResult.c : 0;
+              const idxResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id=?').get(taskId);
+              const idx = idxResult ? idxResult.count : 0;
               
               // Clean stage name - remove markdown formatting
               const cleanName = stage.name.replace(/\*\*/g, '').trim();

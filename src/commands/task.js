@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
 const db = require('../utils/db');
 const { getPrereqs, getSuggestions, generateTaskStages, enhanceTaskDescription, enhanceTaskNote, checkAIStatus } = require('../utils/ai');
 const { stageActionRow } = require('../components/buttons');
@@ -1090,10 +1090,20 @@ module.exports = {
     }
     
     try {
-      // Create the faction role
+      // Check bot permissions before creating role
+      const botMember = interaction.guild.members.me;
+      if (!botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        return interaction.editReply('❌ I need **Manage Roles** permission to create factions.');
+      }
+      if (!botMember.permissions.has(PermissionsBitField.Flags.ManageNicknames)) {
+        return interaction.editReply('❌ I need **Manage Nicknames** permission to update member nicknames.');
+      }
+      
+      // Create the faction role (position it below bot's highest role)
       const role = await interaction.guild.roles.create({
         name: factionName,
         color: colorHex,
+        position: Math.max(0, botMember.roles.highest.position - 1),
         reason: `Faction created by ${interaction.user.tag} via Task Bot`
       });
       
