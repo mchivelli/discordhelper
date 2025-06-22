@@ -634,10 +634,10 @@ View with \`/task list id:${taskId}\`.`
     if (interaction.isButton()) {
       const customIdParts = interaction.customId.split('_');
       const buttonAction = customIdParts[0];
+      let handledByFirstHandler = false;
       
       // Handle task-related buttons
       if (['accept', 'modify', 'skip', 'advance', 'view', 'create'].includes(buttonAction)) {
-        let handledByFirstHandler = false;
         const taskAction = customIdParts[0];
         let taskId = customIdParts[1];
         
@@ -977,31 +977,75 @@ Add stages manually with \`/task add-stage\`.`,
         // Handle view task
         else if (taskAction === 'view') {
           handledByFirstHandler = true;
-          const command = client.commands.get('task');
-          if (command) {
-            // Create a synthetic interaction to pass to the task list command
-            const syntheticInteraction = {
-              options: {
-                getSubcommand: () => 'list',
-                getString: (name) => name === 'id' ? taskId : null
-              },
-              reply: interaction.reply.bind(interaction),
-              deferReply: interaction.deferReply.bind(interaction),
-              editReply: interaction.editReply.bind(interaction),
-              user: interaction.user,
-              guildId: interaction.guildId
-            };
-            
-            try {
-              // Execute the task list command
-              await command.execute(syntheticInteraction);
-            } catch (error) {
-              logger.error('Error viewing task:', error);
-              return interaction.reply({ 
-                content: `An error occurred: ${error.message}`, 
-                ephemeral: true 
-              });
+          try {
+            // Get task details directly (no admin check needed for viewing)
+            const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+            if (!task) {
+              await interaction.reply({ content: `❌ Task with ID \`${taskId}\` not found.`, ephemeral: true });
+              return;
             }
+            
+            // Get stages for this task
+            const stages = db.prepare('SELECT * FROM stages WHERE task_id = ? ORDER BY idx').all(taskId);
+            
+            // Calculate completion percentage
+            const totalStages = stages.length;
+            const completedStages = stages.filter(s => s.done === 1).length;
+            const completionPercentage = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+              .setTitle(`Task: "${task.name}" [${completionPercentage}%]`)
+              .setDescription(task.description ? task.description : 'No description provided')
+              .setColor(0x3498db)
+              .setFooter({ text: `Task ID: ${taskId} | Created: ${new Date(task.created_at).toLocaleDateString()}` });
+            
+            // No stages message
+            if (!stages.length) {
+              embed.addFields({ name: 'No stages defined', value: 'Add stages with `/task add-stage`' });
+              await interaction.reply({ embeds: [embed], ephemeral: true });
+              return;
+            }
+            
+            // Add stages to embed
+            stages.forEach(stage => {
+              let statusValue = '';
+              
+              if (stage.done === 1) {
+                const completedDate = stage.completed_at ? 
+                  new Date(stage.completed_at).toLocaleDateString() : 
+                  'Date not recorded';
+                
+                statusValue = `✅ Done [${completedDate}]`;
+                
+                // Add completion notes if available
+                if (stage.completion_notes) {
+                  statusValue += `\n${stage.completion_notes}`;
+                }
+              } else {
+                // Show current stage clearly
+                const isCurrentStage = stages.filter(s => s.done === 1).length === stage.idx;
+                statusValue = isCurrentStage ? '🔄 **Current Stage**' : '⏳ Pending';
+                
+                if (stage.assignee) {
+                  statusValue += ` - Assigned to <@${stage.assignee}>`;
+                }
+              }
+              
+              embed.addFields({
+                name: `Stage ${stage.idx + 1}: ${stage.name}`,
+                value: `${stage.desc || 'No description'}\n${statusValue}`,
+                inline: false
+              });
+            });
+            
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+          } catch (error) {
+            logger.error('Error viewing task:', error);
+            return interaction.reply({ 
+              content: `An error occurred: ${error.message}`, 
+              ephemeral: true 
+            });
           }
           return;
         }
@@ -1149,10 +1193,39 @@ Add stages manually with \`/task add-stage\`.`,
           return;
         }
         
-        let details = `**Task: ${task.name} (${id})**\n\nStages:\n`;
+        // Calculate completion percentage and current stage
+        const totalStages = stages.length;
+        const completedStages = stages.filter(s => s.done === 1).length;
+        const completionPercentage = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+        const currentStageIdx = completedStages; // The next incomplete stage
+        
+        let details = `**Task: ${task.name} (${id})** - ${completionPercentage}% Complete\n${task.description || 'No description'}\n\n**Stages:**\n`;
+        
         stages.forEach((stage, idx) => {
-          details += `${idx+1}. **${stage.name}** - ${stage.done ? '\u2705 Done' : stage.assignee ? `\ud83d\udc64 <@${stage.assignee}>` : '\u23f3 Pending'}\n`;
-          details += `   ${stage.desc}\n`;
+          let status;
+          let prefix = `${idx+1}.`;
+          
+          if (stage.done === 1) {
+            status = '✅ Done';
+            if (stage.completed_at) {
+              status += ` (${new Date(stage.completed_at).toLocaleDateString()})`;
+            }
+          } else if (idx === currentStageIdx) {
+            // This is the current active stage
+            prefix = `**🔄 ${idx+1}.`;
+            status = 'CURRENT STAGE**';
+          } else {
+            status = '⏳ Pending';
+            if (stage.assignee) {
+              status += ` - <@${stage.assignee}>`;
+            }
+          }
+          
+          details += `${prefix} **${stage.name}** - ${status}\n`;
+          if (stage.desc) {
+            details += `   📝 ${stage.desc}\n`;
+          }
+          details += '\n';
         });
         
         await interaction.reply({ content: details, ephemeral: true });
