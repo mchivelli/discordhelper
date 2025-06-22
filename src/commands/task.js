@@ -161,13 +161,71 @@ module.exports = {
           { name: 'Brewer', value: 'brewer' },
           { name: 'Scribe', value: 'scribe' },
           { name: 'Spy', value: 'spy' }
-        ))),
+        )))
+    .addSubcommandGroup(group =>
+      group.setName('faction')
+      .setDescription('Manage custom factions and roles')
+      .addSubcommand(sub =>
+        sub.setName('create')
+        .setDescription('Create a new faction with custom role and members')
+        .addStringOption(o =>
+          o.setName('name')
+          .setDescription('Name of the faction (e.g., "Mythica Empire")')
+          .setRequired(true)
+          .setMaxLength(50))
+        .addStringOption(o =>
+          o.setName('color')
+          .setDescription('Hex color code for the role (e.g., #FF0000 for red)')
+          .setRequired(true)
+          .setMaxLength(7))
+        .addStringOption(o =>
+          o.setName('members')
+          .setDescription('Space-separated list of member IDs or mentions')
+          .setRequired(true)
+          .setMaxLength(500)))
+      .addSubcommand(sub =>
+        sub.setName('delete')
+        .setDescription('Delete a faction role and clean up member nicknames')
+        .addRoleOption(o =>
+          o.setName('role')
+          .setDescription('The faction role to delete')
+          .setRequired(true)))),
         
   // Handle autocomplete interactions
   async autocomplete(interaction) {
+    const subcommandGroup = interaction.options.getSubcommandGroup();
     const subcommand = interaction.options.getSubcommand();
     const focusedOption = interaction.options.getFocused(true);
     
+    // Handle faction color autocomplete
+    if (subcommandGroup === 'faction' && subcommand === 'create' && focusedOption.name === 'color') {
+      const colorSuggestions = [
+        { name: '🔴 Red (#FF0000)', value: '#FF0000' },
+        { name: '🔵 Blue (#0000FF)', value: '#0000FF' },
+        { name: '🟢 Green (#00FF00)', value: '#00FF00' },
+        { name: '🟡 Yellow (#FFFF00)', value: '#FFFF00' },
+        { name: '🟣 Purple (#800080)', value: '#800080' },
+        { name: '🟠 Orange (#FFA500)', value: '#FFA500' },
+        { name: '⚫ Black (#000000)', value: '#000000' },
+        { name: '⚪ White (#FFFFFF)', value: '#FFFFFF' },
+        { name: '🟤 Brown (#8B4513)', value: '#8B4513' },
+        { name: '🩷 Pink (#FFC0CB)', value: '#FFC0CB' },
+        { name: '🩵 Cyan (#00FFFF)', value: '#00FFFF' },
+        { name: '💚 Dark Green (#006400)', value: '#006400' },
+        { name: '💙 Dark Blue (#000080)', value: '#000080' },
+        { name: '❤️ Dark Red (#8B0000)', value: '#8B0000' },
+        { name: '🧡 Gold (#FFD700)', value: '#FFD700' }
+      ];
+      
+      const filtered = colorSuggestions.filter(color => 
+        color.name.toLowerCase().includes(focusedOption.value.toLowerCase()) ||
+        color.value.toLowerCase().includes(focusedOption.value.toLowerCase())
+      );
+      
+      return interaction.respond(filtered.slice(0, 25));
+    }
+    
+    // Handle task ID autocomplete (existing code)
     if (focusedOption.name === 'id') {
       // Get the partial input typed by the user
       const partialId = focusedOption.value.toLowerCase();
@@ -239,7 +297,13 @@ module.exports = {
       });
     }
     
+    const subcommandGroup = interaction.options.getSubcommandGroup();
     const subcommand = interaction.options.getSubcommand();
+    
+    // Handle faction subcommand group
+    if (subcommandGroup === 'faction') {
+      return this.handleFactionCommands(interaction, subcommand);
+    }
     
     switch (subcommand) {
       case 'create': {
@@ -362,7 +426,16 @@ module.exports = {
           const id = interaction.options.getString('id');
           const name = interaction.options.getString('name');
           const desc = interaction.options.getString('desc');
-          const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(id).c;
+          
+          // Check if task exists first
+          const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(id);
+          if (!task) {
+            return interaction.editReply(`❌ Task with ID \`${id}\` not found.`);
+          }
+          
+          const idxResult = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(id);
+          const idx = idxResult ? idxResult.c : 0;
+          
           db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)').run(id, idx, name, desc, Date.now());
           return interaction.editReply(`➕ Stage **${name}** added to task \`${id}\``);
         } catch (error) {
@@ -503,9 +576,11 @@ module.exports = {
           ).run(Date.now(), processedNotes, id, currentStage.idx);
           
           // Calculate new completion percentage
-          const totalStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(id).count;
-          const completedStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(id).count;
-          const completionPercentage = Math.round((completedStages / totalStages) * 100);
+          const totalStagesResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(id);
+          const completedStagesResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(id);
+          const totalStages = totalStagesResult ? totalStagesResult.count : 0;
+          const completedStages = completedStagesResult ? completedStagesResult.count : 0;
+          const completionPercentage = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
           
           // Update task completion percentage
           db.prepare('UPDATE tasks SET completion_percentage = ? WHERE id = ?').run(completionPercentage, id);
@@ -671,6 +746,123 @@ module.exports = {
         }
         break;
       }
+      case 'analytics': {
+        try {
+          await interaction.deferReply();
+          
+          // Get guild ID for server-specific analytics
+          const guildId = interaction.guildId;
+          
+          // Get current timestamp for date calculations
+          const now = Date.now();
+          const oneWeekAgo = now - (7 * 24 * 60 * 60 * 1000);
+          const oneMonthAgo = now - (30 * 24 * 60 * 60 * 1000);
+          
+          // Get overall task stats
+          const totalTasksResult = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE guild_id = ?').get(guildId);
+          const completedTasksResult = db.prepare(
+            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage = 100'
+          ).get(guildId);
+          const inProgressTasksResult = db.prepare(
+            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage > 0 AND completion_percentage < 100'
+          ).get(guildId);
+          const notStartedTasksResult = db.prepare(
+            'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage = 0'
+          ).get(guildId);
+          
+          const totalTasks = totalTasksResult ? totalTasksResult.count : 0;
+          const completedTasks = completedTasksResult ? completedTasksResult.count : 0;
+          const inProgressTasks = inProgressTasksResult ? inProgressTasksResult.count : 0;
+          const notStartedTasks = notStartedTasksResult ? notStartedTasksResult.count : 0;
+          
+          // Calculate completion rate
+          const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+          
+          // Get recently completed tasks
+          const recentCompletions = db.prepare(
+            `SELECT t.id, t.name, t.completion_percentage, s.completed_at
+             FROM tasks t
+             JOIN stages s ON t.id = s.task_id
+             WHERE t.guild_id = ? AND s.completed_at > ? AND s.done = 1
+             GROUP BY t.id
+             ORDER BY s.completed_at DESC
+             LIMIT 5`
+          ).all(guildId, oneWeekAgo);
+          
+          // Get upcoming deadlines
+          const upcomingDeadlines = db.prepare(
+            `SELECT id, name, deadline, completion_percentage
+             FROM tasks
+             WHERE guild_id = ? AND deadline IS NOT NULL AND deadline != ''
+               AND (completion_percentage < 100 OR completion_percentage IS NULL)
+             ORDER BY
+               CASE
+                 WHEN deadline LIKE '%-%' THEN date(deadline)
+                 WHEN deadline LIKE '%.%.%' THEN date(substr(deadline, 7, 4) || '-' || substr(deadline, 4, 2) || '-' || substr(deadline, 1, 2))
+                 ELSE date(deadline)
+               END ASC
+             LIMIT 5`
+          ).all(guildId);
+          
+          // Create main embed for overall analytics
+          const analyticsEmbed = new EmbedBuilder()
+            .setTitle('📊 Task Analytics Dashboard')
+            .setDescription(`Task statistics for this server`)
+            .setColor(0x3498db)
+            .setTimestamp()
+            .addFields(
+              { name: '📋 Total Tasks', value: `${totalTasks}`, inline: true },
+              { name: '✅ Completed', value: `${completedTasks} (${completionRate}%)`, inline: true },
+              { name: '⏱️ In Progress', value: `${inProgressTasks}`, inline: true },
+              { name: '🆕 Not Started', value: `${notStartedTasks}`, inline: true }
+            );
+          
+          // Add visual completion rate bar
+          analyticsEmbed.addFields({
+            name: '📈 Task Completion Rate',
+            value: this.createProgressBar(completionRate)
+          });
+          
+          // Add recent completions if any
+          if (recentCompletions.length > 0) {
+            let recentCompStr = '';
+            recentCompletions.forEach(task => {
+              const completeDate = new Date(task.completed_at).toLocaleDateString();
+              recentCompStr += `\n• \`${task.id}\` **${task.name}** - ${completeDate}`;
+            });
+            analyticsEmbed.addFields({ name: '🎉 Recent Task Completions', value: recentCompStr || 'None' });
+          }
+          
+          // Create embed for upcoming deadlines
+          const deadlinesEmbed = new EmbedBuilder()
+            .setTitle('⏰ Upcoming Deadlines')
+            .setDescription('Tasks with approaching deadlines')
+            .setColor(0xe74c3c);
+          
+          if (upcomingDeadlines.length > 0) {
+            let deadlinesStr = '';
+            upcomingDeadlines.forEach(task => {
+              const formattedDate = this.formatDate(task.deadline);
+              const progressBar = this.createProgressBar(task.completion_percentage || 0);
+              deadlinesStr += `\n• \`${task.id}\` **${task.name}**\n  ${formattedDate}\n  ${progressBar}`;
+            });
+            deadlinesEmbed.setDescription(deadlinesStr);
+          } else {
+            deadlinesEmbed.setDescription('No upcoming deadlines found');
+          }
+          
+          // Respond with embeds
+          await interaction.editReply({ embeds: [analyticsEmbed, deadlinesEmbed] });
+          
+        } catch (error) {
+          logger.error('Error generating analytics:', error);
+          if (interaction.deferred) {
+            await interaction.editReply('❌ An error occurred while generating analytics: ' + error.message);
+          } else {
+            await interaction.reply({ content: '❌ An error occurred while generating analytics: ' + error.message, ephemeral: true });
+          }
+        }
+      }
       case 'remove': {
         try {
           await interaction.deferReply();
@@ -682,8 +874,9 @@ module.exports = {
             return interaction.editReply(`❌ Task with ID \`${id}\` not found.`);
           }
           
-          // Get count of stages to be removed
-          const stageCount = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(id).count;
+          // Get count of stages to be removed - handle null result
+          const stageCountResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(id);
+          const stageCount = stageCountResult ? stageCountResult.count : 0;
           
           // Delete stages first
           db.prepare('DELETE FROM stages WHERE task_id = ?').run(id);
@@ -740,16 +933,21 @@ module.exports = {
           const oneMonthAgo = now - (30 * 24 * 60 * 60 * 1000);
           
           // Get overall task stats
-          const totalTasks = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE guild_id = ?').get(guildId).count;
-          const completedTasks = db.prepare(
+          const totalTasksResult = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE guild_id = ?').get(guildId);
+          const completedTasksResult = db.prepare(
             'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage = 100'
-          ).get(guildId).count;
-          const inProgressTasks = db.prepare(
+          ).get(guildId);
+          const inProgressTasksResult = db.prepare(
             'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage > 0 AND completion_percentage < 100'
-          ).get(guildId).count;
-          const notStartedTasks = db.prepare(
+          ).get(guildId);
+          const notStartedTasksResult = db.prepare(
             'SELECT COUNT(*) as count FROM tasks WHERE guild_id = ? AND completion_percentage = 0'
-          ).get(guildId).count;
+          ).get(guildId);
+          
+          const totalTasks = totalTasksResult ? totalTasksResult.count : 0;
+          const completedTasks = completedTasksResult ? completedTasksResult.count : 0;
+          const inProgressTasks = inProgressTasksResult ? inProgressTasksResult.count : 0;
+          const notStartedTasks = notStartedTasksResult ? notStartedTasksResult.count : 0;
           
           // Calculate completion rate
           const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
@@ -975,6 +1173,306 @@ module.exports = {
         }
         break;
       }
+    }
+  },
+
+  /**
+   * Handle faction subcommand group
+   * @param {Object} interaction - Discord interaction object
+   * @param {string} subcommand - The faction subcommand (create/delete)
+   */
+  async handleFactionCommands(interaction, subcommand) {
+    try {
+      if (subcommand === 'create') {
+        await this.handleFactionCreate(interaction);
+      } else if (subcommand === 'delete') {
+        await this.handleFactionDelete(interaction);
+      }
+    } catch (error) {
+      logger.error(`Error handling faction ${subcommand}:`, error);
+      if (interaction.deferred) {
+        await interaction.editReply(`❌ Error executing faction ${subcommand}: ${error.message}`);
+      } else {
+        await interaction.reply({ content: `❌ Error executing faction ${subcommand}: ${error.message}`, ephemeral: true });
+      }
+    }
+  },
+
+  /**
+   * Handle faction create command
+   * @param {Object} interaction - Discord interaction object
+   */
+  async handleFactionCreate(interaction) {
+    await interaction.deferReply();
+    
+    const factionName = interaction.options.getString('name');
+    const colorHex = interaction.options.getString('color');
+    const membersString = interaction.options.getString('members');
+    
+    // Validate hex color
+    if (!/^#[0-9A-Fa-f]{6}$/.test(colorHex)) {
+      return interaction.editReply('❌ Invalid color format. Please use hex format like #FF0000');
+    }
+    
+    // Parse member mentions and IDs
+    const memberIds = membersString.match(/\d{17,19}/g) || [];
+    if (memberIds.length === 0) {
+      return interaction.editReply('❌ No valid member IDs or mentions found. Please mention users or provide their IDs.');
+    }
+    
+    // Check if role already exists
+    const existingRole = interaction.guild.roles.cache.find(role => role.name === factionName);
+    if (existingRole) {
+      return interaction.editReply(`❌ A role with the name "${factionName}" already exists.`);
+    }
+    
+    try {
+      // Create the faction role
+      const role = await interaction.guild.roles.create({
+        name: factionName,
+        color: colorHex,
+        reason: `Faction created by ${interaction.user.tag} via Task Bot`
+      });
+      
+      // Generate faction abbreviation
+      const abbreviation = this.generateFactionAbbreviation(factionName);
+      
+      let successCount = 0;
+      let failCount = 0;
+      const memberDetails = [];
+      
+      // Add role to members and update nicknames
+      for (const memberId of memberIds) {
+        try {
+          const member = await interaction.guild.members.fetch(memberId);
+          await member.roles.add(role);
+          
+          // Update nickname with faction prefix
+          const currentName = member.displayName;
+          const newNickname = `[${abbreviation}] ${currentName.replace(/^\[.*?\]\s*/, '')}`;
+          
+          // Discord nickname limit is 32 characters
+          const truncatedNickname = newNickname.length > 32 ? 
+            `[${abbreviation}] ${currentName.replace(/^\[.*?\]\s*/, '').substring(0, 32 - abbreviation.length - 3)}` : 
+            newNickname;
+          
+          await member.setNickname(truncatedNickname);
+          
+          memberDetails.push(`✅ ${member.displayName}`);
+          successCount++;
+        } catch (memberError) {
+          logger.warn(`Failed to add role/update nickname for member ${memberId}:`, memberError);
+          memberDetails.push(`❌ <@${memberId}> (failed)`);
+          failCount++;
+        }
+      }
+      
+      // Create success embed
+      const embed = new EmbedBuilder()
+        .setTitle('🏛️ Faction Created Successfully!')
+        .setDescription(`**${factionName}** has been established`)
+        .setColor(colorHex)
+        .addFields(
+          { name: 'Role', value: `<@&${role.id}>`, inline: true },
+          { name: 'Abbreviation', value: `[${abbreviation}]`, inline: true },
+          { name: 'Color', value: colorHex, inline: true },
+          { name: 'Members Added', value: `${successCount} successful, ${failCount} failed` },
+          { name: 'Member Status', value: memberDetails.join('\n') || 'None' }
+        )
+        .setFooter({ text: `Faction ID: ${role.id}` })
+        .setTimestamp();
+      
+      await interaction.editReply({ embeds: [embed] });
+      
+    } catch (error) {
+      logger.error('Error creating faction role:', error);
+      await interaction.editReply(`❌ Failed to create faction role: ${error.message}`);
+    }
+  },
+
+  /**
+   * Handle faction delete command
+   * @param {Object} interaction - Discord interaction object
+   */
+  async handleFactionDelete(interaction) {
+    await interaction.deferReply();
+    
+    const role = interaction.options.getRole('role');
+    
+    if (!role) {
+      return interaction.editReply('❌ Role not found.');
+    }
+    
+    // Get all members with this role
+    const membersWithRole = role.members;
+    
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      const memberDetails = [];
+      
+      // Remove role from members and clean up nicknames
+      for (const [memberId, member] of membersWithRole) {
+        try {
+          await member.roles.remove(role);
+          
+          // Clean up nickname - remove faction prefix
+          const currentNickname = member.displayName;
+          const cleanedNickname = currentNickname.replace(/^\[.*?\]\s*/, '');
+          
+          if (cleanedNickname !== currentNickname) {
+            await member.setNickname(cleanedNickname || null);
+          }
+          
+          memberDetails.push(`✅ ${member.displayName}`);
+          successCount++;
+        } catch (memberError) {
+          logger.warn(`Failed to remove role/clean nickname for member ${memberId}:`, memberError);
+          memberDetails.push(`❌ ${member.displayName} (failed)`);
+          failCount++;
+        }
+      }
+      
+      // Delete the role
+      const roleName = role.name;
+      const roleColor = role.hexColor;
+      await role.delete(`Faction deleted by ${interaction.user.tag} via Task Bot`);
+      
+      // Create success embed
+      const embed = new EmbedBuilder()
+        .setTitle('🗑️ Faction Deleted Successfully!')
+        .setDescription(`**${roleName}** has been disbanded`)
+        .setColor(roleColor)
+        .addFields(
+          { name: 'Members Processed', value: `${successCount} successful, ${failCount} failed` },
+          { name: 'Member Status', value: memberDetails.join('\n') || 'No members found' }
+        )
+        .setFooter({ text: 'All nicknames have been cleaned up' })
+        .setTimestamp();
+      
+      await interaction.editReply({ embeds: [embed] });
+      
+    } catch (error) {
+      logger.error('Error deleting faction role:', error);
+      await interaction.editReply(`❌ Failed to delete faction role: ${error.message}`);
+    }
+  },
+
+  /**
+   * Generate faction abbreviation from faction name
+   * @param {string} factionName - The full faction name
+   * @returns {string} - Abbreviated faction name
+   */
+  generateFactionAbbreviation(factionName) {
+    // Remove common words and get initials from remaining words
+    const commonWords = ['the', 'of', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'with', 'by'];
+    const words = factionName
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(word => !commonWords.includes(word) && word.length > 0);
+    
+    if (words.length === 0) {
+      // Fallback: use first 3 characters of the original name
+      return factionName.substring(0, 3).toUpperCase();
+    }
+    
+    if (words.length === 1) {
+      // Single word: use first 3 characters
+      return words[0].substring(0, 3).toUpperCase();
+    }
+    
+    if (words.length === 2) {
+      // Two words: use first 2 characters of first word + first character of second
+      return (words[0].substring(0, 2) + words[1].substring(0, 1)).toUpperCase();
+    }
+    
+    // Three or more words: use first character of each of the first 3 words
+    return words.slice(0, 3).map(word => word.charAt(0)).join('').toUpperCase();
+  },
+
+  /**
+   * Post task completion to DevLog channel/thread
+   * @param {Object} client - Discord client
+   * @param {string} taskId - ID of the completed task
+   * @param {Object} task - Task details from database
+   * @param {Array} stages - Completed stages from database
+   * @param {Object} completedBy - User who completed the final stage
+   */
+  async postToDevLog(client, taskId, task, stages, completedBy) {
+    const DEVLOG_CHANNEL_ID = '1348366844225917030';
+    const DEVLOG_THREAD_ID = '1386336937115389952';
+    
+    try {
+      // Get the channel
+      const channel = await client.channels.fetch(DEVLOG_CHANNEL_ID).catch(() => null);
+      if (!channel) {
+        logger.warn('DevLog channel not found');
+        return;
+      }
+      
+      // Get the thread
+      const thread = await channel.threads.fetch(DEVLOG_THREAD_ID).catch(() => null);
+      if (!thread) {
+        logger.warn('DevLog thread not found');
+        return;
+      }
+      
+      // Create completion embed
+      const embed = new EmbedBuilder()
+        .setTitle('📋 Task Completed!')
+        .setDescription(`**${task.name}** has been successfully completed`)
+        .setColor('#4CAF50')
+        .addFields(
+          { name: '🆔 Task ID', value: taskId, inline: true },
+          { name: '👤 Completed by', value: `<@${completedBy.id}>`, inline: true },
+          { name: '📅 Completion Date', value: new Date().toLocaleDateString(), inline: true }
+        )
+        .setTimestamp();
+      
+      if (task.description) {
+        embed.addFields({ name: '📝 Description', value: task.description });
+      }
+      
+      // Add stages details
+      if (stages && stages.length > 0) {
+        let stagesText = '';
+        stages.forEach((stage, idx) => {
+          const completedDate = stage.completed_at ? 
+            new Date(stage.completed_at).toLocaleDateString() : 
+            'Unknown';
+          stagesText += `${idx + 1}. **${stage.name}** - ✅ ${completedDate}\n`;
+          if (stage.completion_notes) {
+            stagesText += `   _${stage.completion_notes}_\n`;
+          }
+        });
+        
+        if (stagesText.length > 1024) {
+          stagesText = stagesText.substring(0, 1020) + '...';
+        }
+        
+        embed.addFields({ name: '🎯 Completed Stages', value: stagesText });
+      }
+      
+      // Calculate completion time if we have created date
+      if (task.created_at) {
+        const createdDate = new Date(task.created_at);
+        const completedDate = new Date();
+        const daysDiff = Math.ceil((completedDate - createdDate) / (1000 * 60 * 60 * 24));
+        embed.addFields({ 
+          name: '⏱️ Completion Time', 
+          value: `${daysDiff} day${daysDiff !== 1 ? 's' : ''}`,
+          inline: true 
+        });
+      }
+      
+      embed.setFooter({ text: 'Task Management System' });
+      
+      // Post to thread
+      await thread.send({ embeds: [embed] });
+      logger.info(`Posted task completion to DevLog: ${taskId}`);
+      
+    } catch (error) {
+      logger.error('Error posting to DevLog:', error);
     }
   },
 

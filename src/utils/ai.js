@@ -295,6 +295,55 @@ async function enhanceTaskDescription(taskName, description) {
 }
 
 /**
+ * Generate AI-suggested follow-up tasks or next actions after task completion
+ * @param {string} taskName - Name of the completed task
+ * @param {string} description - Description of the completed task
+ * @param {Array} completedStages - Array of completed stages with their details
+ * @returns {Promise<Array>} - Array of suggested follow-up task objects
+ */
+async function generateFollowUpTasks(taskName, description, completedStages = []) {
+  const messages = [
+    {
+      role: 'system',
+      content: 'You are a task management assistant for a Discord server. Based on the completed task, suggest 2-4 logical follow-up tasks or next actions that would naturally come after this work. Each suggestion should have a name and description. Add an emoji at the start of each task name. Respond with a valid JSON array.'
+    },
+    {
+      role: 'user',
+      content: `Completed Task: ${taskName}\nDescription: ${description}\nCompleted Stages: ${completedStages.map(s => s.name).join(', ')}\n\nPlease suggest follow-up tasks or next actions that would logically come after completing this task. Format your response as a valid JSON array of objects, each with "name" and "description" properties. The name should start with an emoji.`
+    }
+  ];
+  
+  try {
+    const result = await callLLMAPI(messages, 600);
+    
+    // Parse the JSON response
+    const match = result.match(/\[\s*\{.*\}\s*\]/s);
+    if (match) {
+      return JSON.parse(match[0]);
+    }
+    
+    try {
+      return JSON.parse(result);
+    } catch {
+      const codeBlockMatch = result.match(/```(?:json)?([\s\S]*?)```/);
+      if (codeBlockMatch && codeBlockMatch[1]) {
+        return JSON.parse(codeBlockMatch[1].trim());
+      }
+    }
+  } catch (error) {
+    console.error('Failed to generate follow-up tasks:', error);
+  }
+  
+  // Return generic follow-up suggestions if AI fails
+  return [
+    { name: '📊 Review Results', description: 'Analyze the outcomes and gather feedback from the completed task.' },
+    { name: '📝 Documentation', description: 'Document the process and lessons learned for future reference.' },
+    { name: '🔄 Process Improvement', description: 'Identify areas for improvement based on this task experience.' },
+    { name: '📢 Share Updates', description: 'Communicate the completion and results to relevant stakeholders.' }
+  ];
+}
+
+/**
  * Simple function to check if AI services are configured and working
  * @returns {Promise<{success: boolean, message: string}>} Status of AI services
  */
@@ -334,6 +383,7 @@ module.exports = {
   enhanceAnnouncement, 
   getSuggestions, 
   generateTaskStages, 
+  generateFollowUpTasks,
   enhanceTaskNote,
   enhanceTaskDescription,
   checkAIStatus 

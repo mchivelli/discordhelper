@@ -251,7 +251,8 @@ client.on(Events.InteractionCreate, async interaction => {
           
           for (let i = 0; i < modifiedStages.length; i++) {
             const stage = modifiedStages[i];
-            const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId).c;
+            const idxResult = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId);
+            const idx = idxResult ? idxResult.c : 0;
             db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)')
               .run(taskId, idx, stage.name, stage.description, Date.now());
           }
@@ -318,9 +319,11 @@ View with \`/task list id:${taskId}\`.`
           ).run(Date.now(), processedNotes, taskId, parseInt(stageIdx));
           
           // Calculate new completion percentage
-          const totalStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(taskId).count;
-          const completedStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(taskId).count;
-          const completionPercentage = Math.round((completedStages / totalStages) * 100);
+          const totalStagesResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(taskId);
+          const completedStagesResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(taskId);
+          const totalStages = totalStagesResult ? totalStagesResult.count : 0;
+          const completedStages = completedStagesResult ? completedStagesResult.count : 0;
+          const completionPercentage = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
           
           // Update task completion percentage
           db.prepare('UPDATE tasks SET completion_percentage = ? WHERE id = ?').run(completionPercentage, taskId);
@@ -373,8 +376,71 @@ View with \`/task list id:${taskId}\`.`
             
             return interaction.editReply({ embeds: [embed], components: [advanceRow] });
           } else {
-            // All stages completed
+            // All stages completed - suggest follow-up tasks with AI
             embed.setDescription('🎉 All stages completed!');
+            
+            try {
+              // Get task details for AI suggestions and DevLog
+              const task = db.prepare('SELECT name, description, created_at FROM tasks WHERE id = ?').get(taskId);
+              const allStages = db.prepare('SELECT name, desc, completion_notes, completed_at FROM stages WHERE task_id = ? ORDER BY idx').all(taskId);
+              
+              if (task) {
+                // Post to DevLog
+                try {
+                  const taskCommand = client.commands.get('task');
+                  if (taskCommand && taskCommand.postToDevLog) {
+                    await taskCommand.postToDevLog(client, taskId, task, allStages, interaction.user);
+                  }
+                } catch (devlogError) {
+                  logger.error('Error posting to DevLog:', devlogError);
+                  // Continue even if DevLog fails
+                }
+                
+                const { generateFollowUpTasks } = require('./utils/ai');
+                const followUpSuggestions = await generateFollowUpTasks(
+                  task.name, 
+                  task.description || '', 
+                  allStages
+                );
+                
+                if (followUpSuggestions && followUpSuggestions.length > 0) {
+                  // Create follow-up suggestions embed
+                  const followUpEmbed = new EmbedBuilder()
+                    .setTitle('🚀 What\'s Next?')
+                    .setDescription('AI-suggested follow-up tasks and next actions:')
+                    .setColor(0x9b59b6);
+                  
+                  followUpSuggestions.forEach((suggestion, idx) => {
+                    followUpEmbed.addFields({
+                      name: `${idx + 1}. ${suggestion.name}`,
+                      value: suggestion.description
+                    });
+                  });
+                  
+                  // Create buttons for follow-up actions
+                  const followUpRow = new ActionRowBuilder()
+                    .addComponents(
+                      new ButtonBuilder()
+                        .setCustomId(`create_followup_${taskId}`)
+                        .setLabel('Create Follow-up Task')
+                        .setStyle(ButtonStyle.Primary),
+                      new ButtonBuilder()
+                        .setCustomId(`view_task_${taskId}`)
+                        .setLabel('View Completed Task')
+                        .setStyle(ButtonStyle.Secondary)
+                    );
+                  
+                  return interaction.editReply({ 
+                    embeds: [embed, followUpEmbed],
+                    components: [followUpRow]
+                  });
+                }
+              }
+            } catch (error) {
+              logger.error('Error generating follow-up suggestions:', error);
+              // Continue with regular completion message if AI fails
+            }
+            
             return interaction.editReply({ embeds: [embed] });
           }
         } catch (error) {
@@ -383,6 +449,92 @@ View with \`/task list id:${taskId}\`.`
             content: `An error occurred: ${error.message}`, 
             ephemeral: true 
           });
+        }
+      }
+
+      // Handle follow-up task creation modal
+      else if (customId.startsWith('followup_task_')) {
+        try {
+          const originalTaskId = customId.replace('followup_task_', '');
+          const taskName = interaction.fields.getTextInputValue('task_name');
+          const taskDescription = interaction.fields.getTextInputValue('task_description') || '';
+          const useAiStages = interaction.fields.getTextInputValue('use_ai_stages')?.toLowerCase?.() || 'yes';
+          const shouldUseAI = useAiStages === 'yes' || useAiStages === 'y' || useAiStages === 'true';
+          
+          await interaction.deferReply();
+          
+          // Generate unique ID for the new task
+          const newTaskId = `t${Date.now()}`;
+          
+          // Create the follow-up task
+          db.prepare(
+            'INSERT INTO tasks(id, name, description, completion_percentage, created_at, guild_id, creator_id) VALUES(?, ?, ?, ?, ?, ?, ?)'
+          ).run(newTaskId, taskName, taskDescription, 0, Date.now(), interaction.guildId, interaction.user.id);
+          
+          // Create response embed
+          const embed = new EmbedBuilder()
+            .setTitle(`📋 Follow-up Task Created: ${taskName}`)
+            .setDescription(`**Description:** ${taskDescription || 'No description provided'}`)
+            .addFields({ name: 'Task ID', value: newTaskId, inline: true })
+            .addFields({ name: 'Based on', value: `Task ${originalTaskId}`, inline: true })
+            .setColor('#4CAF50')
+            .setFooter({ text: 'Task Management System' })
+            .setTimestamp();
+          
+          if (shouldUseAI) {
+            try {
+              // Generate AI stage suggestions for the follow-up task
+              const { generateTaskStages } = require('./utils/ai');
+              const suggestedStages = await generateTaskStages(taskName, taskDescription);
+              
+              // Store suggestions in database
+              const suggestionResult = db.prepare(
+                'INSERT INTO task_suggestions(task_id, stage_suggestions, created_at) VALUES(?, ?, ?)'
+              ).run(newTaskId, JSON.stringify(suggestedStages), Date.now());
+              
+              const suggestionId = suggestionResult.lastInsertRowid;
+              
+              // Create embed to display suggestions
+              const suggestionsEmbed = new EmbedBuilder()
+                .setTitle(`AI-Suggested Stages for "${taskName}"`)
+                .setDescription('Here are stage suggestions for your follow-up task. You can accept all or modify them.')
+                .setColor('#2196F3')
+                .setFooter({ text: 'Powered by AI' });
+              
+              // Add each stage as a field
+              suggestedStages.forEach((stage, idx) => {
+                suggestionsEmbed.addFields({
+                  name: `${idx + 1}. ${stage.name}`,
+                  value: stage.description
+                });
+              });
+              
+              // Create buttons for accepting suggestions
+              const { stageSuggestionsActionRow } = require('./components/task-components');
+              const row = stageSuggestionsActionRow(newTaskId, suggestionId);
+              
+              embed.addFields({ name: 'AI Suggestions', value: 'Stage suggestions generated. See below.' });
+              
+              await interaction.editReply({
+                embeds: [embed, suggestionsEmbed],
+                components: [row]
+              });
+            } catch (error) {
+              logger.error('Error generating AI suggestions for follow-up task:', error);
+              embed.addFields({ name: 'AI Suggestions', value: 'Failed to generate suggestions. Please add stages manually.' });
+              await interaction.editReply({ embeds: [embed] });
+            }
+          } else {
+            // No AI suggestions requested
+            await interaction.editReply({ embeds: [embed] });
+          }
+        } catch (error) {
+          logger.error('Error creating follow-up task:', error);
+          if (interaction.deferred) {
+            await interaction.editReply(`❌ Error creating follow-up task: ${error.message}`);
+          } else {
+            await interaction.reply({ content: `❌ Error creating follow-up task: ${error.message}`, ephemeral: true });
+          }
         }
       }
 
@@ -482,7 +634,7 @@ View with \`/task list id:${taskId}\`.`
       const buttonAction = customIdParts[0];
       
       // Handle task-related buttons
-      if (['accept', 'modify', 'skip', 'advance', 'view'].includes(buttonAction)) {
+      if (['accept', 'modify', 'skip', 'advance', 'view', 'create'].includes(buttonAction)) {
         const taskAction = customIdParts[0];
         const taskId = customIdParts[1];
         
@@ -524,7 +676,8 @@ View with \`/task list id:${taskId}\`.`
             // Insert validated stages into the database
             for (let i = 0; i < suggestedStages.length; i++) {
               const stage = suggestedStages[i];
-              const idx = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId).c;
+              const idxResult = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId);
+              const idx = idxResult ? idxResult.c : 0;
               db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)')
                 .run(taskId, idx, stage.name, stage.description || '', Date.now());
             }
@@ -664,9 +817,11 @@ Add stages manually with \`/task add-stage\`.`,
             ).run(Date.now(), taskId, stageIdx);
             
             // Calculate new completion percentage
-            const totalStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(taskId).count;
-            const completedStages = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(taskId).count;
-            const completionPercentage = Math.round((completedStages / totalStages) * 100);
+            const totalStagesResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ?').get(taskId);
+            const completedStagesResult = db.prepare('SELECT COUNT(*) as count FROM stages WHERE task_id = ? AND done = 1').get(taskId);
+            const totalStages = totalStagesResult ? totalStagesResult.count : 0;
+            const completedStages = completedStagesResult ? completedStagesResult.count : 0;
+            const completionPercentage = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
             
             // Update task completion percentage
             db.prepare('UPDATE tasks SET completion_percentage = ? WHERE id = ?').run(completionPercentage, taskId);
@@ -678,15 +833,89 @@ Add stages manually with \`/task add-stage\`.`,
             const nextStage = db.prepare('SELECT * FROM stages WHERE task_id = ? AND done = 0 ORDER BY idx').get(taskId);
             
             // Create response
-            const content = nextStage ?
-              `✅ Completed stage **${completedStage.name}**. Next up: **${nextStage.name}**` :
-              `🎉 Completed stage **${completedStage.name}**. All stages complete!`;
-            
-            // Send a temporary response
-            return interaction.update({ 
-              content,
-              components: [] 
-            });
+            if (nextStage) {
+              const content = `✅ Completed stage **${completedStage.name}**. Next up: **${nextStage.name}**`;
+              return interaction.update({ 
+                content,
+                components: [] 
+              });
+            } else {
+                             // All stages completed - suggest follow-up tasks with AI
+               try {
+                 // Get task details for AI suggestions and DevLog
+                 const task = db.prepare('SELECT name, description, created_at FROM tasks WHERE id = ?').get(taskId);
+                 const allStages = db.prepare('SELECT name, desc, completion_notes, completed_at FROM stages WHERE task_id = ? ORDER BY idx').all(taskId);
+                 
+                 if (task) {
+                   // Post to DevLog
+                   try {
+                     const taskCommand = client.commands.get('task');
+                     if (taskCommand && taskCommand.postToDevLog) {
+                       await taskCommand.postToDevLog(client, taskId, task, allStages, interaction.user);
+                     }
+                   } catch (devlogError) {
+                     logger.error('Error posting to DevLog:', devlogError);
+                     // Continue even if DevLog fails
+                   }
+                   
+                   const { generateFollowUpTasks } = require('./utils/ai');
+                   const followUpSuggestions = await generateFollowUpTasks(
+                     task.name, 
+                     task.description || '', 
+                     allStages
+                   );
+                   
+                   if (followUpSuggestions && followUpSuggestions.length > 0) {
+                     // Create completion embed with follow-up suggestions
+                     const completionEmbed = new EmbedBuilder()
+                       .setTitle('🎉 Task Completed!')
+                       .setDescription(`**${task.name}** has been completed successfully!`)
+                       .setColor(0x4caf50);
+                     
+                     // Create follow-up suggestions embed
+                     const followUpEmbed = new EmbedBuilder()
+                       .setTitle('🚀 What\'s Next?')
+                       .setDescription('AI-suggested follow-up tasks and next actions:')
+                       .setColor(0x9b59b6);
+                     
+                     followUpSuggestions.forEach((suggestion, idx) => {
+                       followUpEmbed.addFields({
+                         name: `${idx + 1}. ${suggestion.name}`,
+                         value: suggestion.description
+                       });
+                     });
+                     
+                     // Create buttons for follow-up actions
+                     const followUpRow = new ActionRowBuilder()
+                       .addComponents(
+                         new ButtonBuilder()
+                           .setCustomId(`create_followup_${taskId}`)
+                           .setLabel('Create Follow-up Task')
+                           .setStyle(ButtonStyle.Primary),
+                         new ButtonBuilder()
+                           .setCustomId(`view_task_${taskId}`)
+                           .setLabel('View Completed Task')
+                           .setStyle(ButtonStyle.Secondary)
+                       );
+                     
+                     return interaction.update({ 
+                       content: null,
+                       embeds: [completionEmbed, followUpEmbed],
+                       components: [followUpRow]
+                     });
+                   }
+                 }
+               } catch (error) {
+                 logger.error('Error generating follow-up suggestions:', error);
+                 // Continue with regular completion message if AI fails
+               }
+              
+              const content = `🎉 Completed stage **${completedStage.name}**. All stages complete!`;
+              return interaction.update({ 
+                content,
+                components: [] 
+              });
+            }
           } catch (error) {
             logger.error('Error advancing stage:', error);
             return interaction.reply({ 
@@ -725,6 +954,62 @@ Add stages manually with \`/task add-stage\`.`,
             }
           }
           return;
+        }
+        
+        // Handle create follow-up task
+        else if (taskAction === 'create' && customIdParts[1] === 'followup') {
+          try {
+            const originalTaskId = customIdParts[2];
+            
+            // Get the original task details
+            const originalTask = db.prepare('SELECT name, description FROM tasks WHERE id = ?').get(originalTaskId);
+            if (!originalTask) {
+              return interaction.reply({ content: 'Original task not found.', ephemeral: true });
+            }
+            
+            // Create a modal for follow-up task creation
+            const modal = new ModalBuilder()
+              .setCustomId(`followup_task_${originalTaskId}`)
+              .setTitle('Create Follow-up Task')
+              .addComponents(
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId('task_name')
+                    .setLabel('Follow-up Task Name')
+                    .setPlaceholder('e.g., Review Results of Website Redesign')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true)
+                    .setMaxLength(100)
+                ),
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId('task_description')
+                    .setLabel('Task Description')
+                    .setPlaceholder('Describe what needs to be done in this follow-up task...')
+                    .setStyle(TextInputStyle.Paragraph)
+                    .setRequired(false)
+                    .setMaxLength(1000)
+                ),
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId('use_ai_stages')
+                    .setLabel('Use AI to suggest stages? (yes/no)')
+                    .setPlaceholder('yes')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(false)
+                    .setMaxLength(3)
+                )
+              );
+            
+            // Show the modal to the user
+            return interaction.showModal(modal);
+          } catch (error) {
+            logger.error('Error showing follow-up task creation modal:', error);
+            return interaction.reply({ 
+              content: `An error occurred: ${error.message}`, 
+              ephemeral: true 
+            });
+          }
         }
       }
       
