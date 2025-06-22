@@ -120,48 +120,6 @@ module.exports = {
         .setDescription('Task ID to remove (e.g., "t12345")')
         .setRequired(true)
         .setAutocomplete(true)))
-    .addSubcommand(sub => 
-      sub.setName('faction')
-      .setDescription('Assign faction role to a user')
-      .addUserOption(u => 
-        u.setName('user')
-        .setDescription('User to assign faction role to')
-        .setRequired(true))
-      .addStringOption(o => 
-        o.setName('faction')
-        .setDescription('Which faction to assign')
-        .setRequired(true)
-        .addChoices(
-          { name: 'Red Kingdom', value: 'red_kingdom' },
-          { name: 'Blue Alliance', value: 'blue_alliance' },
-          { name: 'Green Tribe', value: 'green_tribe' },
-          { name: 'Yellow Empire', value: 'yellow_empire' },
-          { name: 'Purple Dominion', value: 'purple_dominion' },
-          { name: 'Black Order', value: 'black_order' },
-          { name: 'White Sanctuary', value: 'white_sanctuary' },
-          { name: 'Orange Federation', value: 'orange_federation' }
-        ))
-      .addStringOption(o => 
-        o.setName('role')
-        .setDescription('Role within faction')
-        .setRequired(true)
-        .addChoices(
-          { name: 'Leader', value: 'leader' },
-          { name: 'Co-Leader', value: 'co_leader' },
-          { name: 'General', value: 'general' },
-          { name: 'Captain', value: 'captain' },
-          { name: 'Diplomat', value: 'diplomat' },
-          { name: 'Recruiter', value: 'recruiter' },
-          { name: 'Scout', value: 'scout' },
-          { name: 'Warrior', value: 'warrior' },
-          { name: 'Builder', value: 'builder' },
-          { name: 'Farmer', value: 'farmer' },
-          { name: 'Miner', value: 'miner' },
-          { name: 'Enchanter', value: 'enchanter' },
-          { name: 'Brewer', value: 'brewer' },
-          { name: 'Scribe', value: 'scribe' },
-          { name: 'Spy', value: 'spy' }
-        )))
     .addSubcommandGroup(group =>
       group.setName('faction')
       .setDescription('Manage custom factions and roles')

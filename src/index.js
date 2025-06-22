@@ -183,24 +183,26 @@ if (process.env.NODE_ENV === 'production') {
 
 client.on(Events.InteractionCreate, async interaction => {
   try {
-    // Implement rate limiting
-    const userId = interaction.user.id;
-    const now = Date.now();
-    
-    if (rateLimits.has(userId)) {
-      const expirationTime = rateLimits.get(userId) + COOLDOWN_DURATION;
+    // Only apply rate limiting to interactions that can be replied to
+    if (interaction.isRepliable()) {
+      const userId = interaction.user.id;
+      const now = Date.now();
       
-      if (now < expirationTime) {
-        await interaction.reply({ 
-          content: 'Please wait a moment before using another command.',
-          ephemeral: true 
-        });
-        return;
+      if (rateLimits.has(userId)) {
+        const expirationTime = rateLimits.get(userId) + COOLDOWN_DURATION;
+        
+        if (now < expirationTime) {
+          await interaction.reply({ 
+            content: 'Please wait a moment before using another command.',
+            ephemeral: true 
+          });
+          return;
+        }
       }
+      
+      // Set rate limit for user
+      rateLimits.set(userId, now);
     }
-    
-    // Set rate limit for user
-    rateLimits.set(userId, now);
     // Handle modal submissions
     if (interaction.isModalSubmit()) {
       const customId = interaction.customId;
