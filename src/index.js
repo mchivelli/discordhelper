@@ -696,8 +696,12 @@ View with \`/task list id:${taskId}\`.`
               const stage = suggestedStages[i];
               const idxResult = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId);
               const idx = idxResult ? idxResult.c : 0;
+              
+              // Clean stage name - remove markdown formatting
+              const cleanName = stage.name.replace(/\*\*/g, '').trim();
+              
               db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)')
-                .run(taskId, idx, stage.name, stage.description || '', Date.now());
+                .run(taskId, idx, cleanName, stage.description || '', Date.now());
             }
             
             // Update suggestion status
@@ -1068,7 +1072,7 @@ Add stages manually with \`/task add-stage\`.`,
         return;
       }
       
-      if (action === 'details') {
+      if (oldAction === 'details') {
         // Get all stages for the task
         const task = db.prepare('SELECT * FROM tasks WHERE id=?').get(id);
         const stages = db.prepare('SELECT * FROM stages WHERE task_id=? ORDER BY idx').all(id);
@@ -1085,6 +1089,77 @@ Add stages manually with \`/task add-stage\`.`,
         });
         
         await interaction.reply({ content: details, ephemeral: true });
+        return;
+      }
+      
+      if (oldAction === 'view') {
+        // Handle view task button - redirect to list command functionality
+        try {
+          // Get task details
+          const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+          if (!task) {
+            await interaction.reply({ content: `❌ Task with ID \`${id}\` not found.`, ephemeral: true });
+            return;
+          }
+          
+          // Get stages for this task
+          const stages = db.prepare('SELECT * FROM stages WHERE task_id = ? ORDER BY idx').all(id);
+          
+          // Calculate completion percentage
+          const totalStages = stages.length;
+          const completedStages = stages.filter(s => s.done === 1).length;
+          const completionPercentage = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+          
+          // Create embed
+          const embed = new EmbedBuilder()
+            .setTitle(`Task: "${task.name}" [${completionPercentage}%]`)
+            .setDescription(task.description ? task.description : 'No description provided')
+            .setColor(0x3498db)
+            .setFooter({ text: `Task ID: ${id} | Created: ${new Date(task.created_at).toLocaleDateString()}` });
+          
+          // No stages message
+          if (!stages.length) {
+            embed.addFields({ name: 'No stages defined', value: 'Add stages with `/task add-stage`' });
+            await interaction.reply({ embeds: [embed], ephemeral: true });
+            return;
+          }
+          
+          // Add stages to embed
+          stages.forEach(stage => {
+            let statusValue = '';
+            
+            if (stage.done === 1) {
+              const completedDate = stage.completed_at ? 
+                new Date(stage.completed_at).toLocaleDateString() : 
+                'Date not recorded';
+              
+              statusValue = `✅ Done [${completedDate}]`;
+              
+              // Add completion notes if available
+              if (stage.completion_notes) {
+                statusValue += `\n${stage.completion_notes}`;
+              }
+            } else if (stage.assignee) {
+              statusValue = `👤 Assigned to <@${stage.assignee}>`;
+            } else {
+              statusValue = '⏳ Pending';
+            }
+            
+            embed.addFields({ 
+              name: `${stage.idx + 1}. ${stage.name}`, 
+              value: statusValue 
+            });
+          });
+          
+          // Add a progress bar
+          const progressBar = '■'.repeat(Math.floor(completionPercentage / 10)) + '□'.repeat(10 - Math.floor(completionPercentage / 10));
+          embed.addFields({ name: 'Progress', value: `${completionPercentage}% ${progressBar}` });
+          
+          await interaction.reply({ embeds: [embed], ephemeral: true });
+        } catch (error) {
+          console.error('Error in view button:', error);
+          await interaction.reply({ content: `An error occurred: ${error.message}`, ephemeral: true });
+        }
         return;
       }
       

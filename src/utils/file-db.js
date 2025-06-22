@@ -337,11 +337,11 @@ class QueryBuilder {
             item = {
               id: id,
               task_id: args[0],
-              idx: args[1],
+              idx: parseInt(args[1]) || 0, // Ensure idx is a number
               name: args[2],
               desc: args[3],
               assignee: args[4] || null,
-              done: args[5] || 0,
+              done: parseInt(args[5]) || 0, // Ensure done is a number
               created_at: args[6] || Date.now(),
               completed_at: args[7] || null,
               completion_notes: args[8] || null,
