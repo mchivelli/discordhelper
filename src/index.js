@@ -850,8 +850,11 @@ Add stages manually with \`/task add-stage\`.`,
         else if (taskAction === 'advance' && customIdParts[1] === 'simple') {
           try {
             const stageIdx = parseInt(customIdParts[3]);
+            console.log(`DEBUG: Advance simple handler - customIdParts:`, customIdParts);
+            console.log(`DEBUG: Advance simple handler - taskId: "${taskId}", stageIdx: ${stageIdx}`);
             
             // Mark the current stage as complete
+            console.log(`DEBUG: Advance simple - taskId=${taskId}, stageIdx=${stageIdx}`);
             db.prepare(
               'UPDATE stages SET done = 1, completed_at = ? WHERE task_id = ? AND idx = ?'
             ).run(Date.now(), taskId, stageIdx);
@@ -1053,6 +1056,12 @@ Add stages manually with \`/task add-stage\`.`,
         }
       }
       
+      // If we reach here, the first button handler processed the button, so return early
+      return;
+    }
+    
+    // Handle other button interactions that don't match the first handler
+    if (interaction.isButton()) {
       // Handle original button interactions
       const parts = interaction.customId.split('_');
       const oldAction = parts[0];
@@ -1221,7 +1230,7 @@ Add stages manually with \`/task add-stage\`.`,
       // Handle announcement buttons
       else if (oldAction === 'post') {
         // Verify user has permission to post announcements
-        if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
+        if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
           await interaction.reply({ 
             content: 'You need Manage Messages permission to post announcements.', 
             ephemeral: true 
@@ -1324,7 +1333,7 @@ Add stages manually with \`/task add-stage\`.`,
       else if (oldAction === 'post_changelog') {
         try {
           // Verify user permissions
-          if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
+          if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
             await interaction.reply({ 
               content: 'You need Manage Messages permission to post changelog entries.', 
               ephemeral: true 
@@ -1353,7 +1362,7 @@ Add stages manually with \`/task add-stage\`.`,
       else if (oldAction === 'discard_changelog') {
         try {
           // Verify user permissions
-          if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
+          if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
             await interaction.reply({ 
               content: 'You need Manage Messages permission to discard changelog entries.', 
               ephemeral: true 
@@ -1393,7 +1402,7 @@ Add stages manually with \`/task add-stage\`.`,
       else if (oldAction === 'create_patch') {
         try {
           // Verify user permissions
-          if (!interaction.memberPermissions.has(PermissionsBitField.Flags.ManageMessages)) {
+          if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
             await interaction.reply({ 
               content: 'You need Manage Messages permission to create patch announcements.', 
               ephemeral: true 

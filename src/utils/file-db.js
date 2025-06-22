@@ -240,8 +240,11 @@ class QueryBuilder {
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('and done = 0')) {
       return items.find(item => item.task_id === params[0] && item.done === 0) || null;
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('order by idx')) {
+      console.log(`DEBUG: Executing query: ${this.query}`);
+      console.log(`DEBUG: Query params:`, params);
       let filtered = items.filter(item => item.task_id === params[0]);
       console.log(`DEBUG: Initial filtered stages for taskId ${params[0]}:`, filtered.length);
+      console.log(`DEBUG: All items in stages table:`, items.length);
       
       // Apply done=0 filter if present
       if (this.query.toLowerCase().includes('and done = 0')) {
