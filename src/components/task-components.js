@@ -10,7 +10,8 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBui
 function stageSuggestionsActionRow(taskId, suggestionsId) {
   // Ensure IDs don't cause issues by limiting length and removing special characters
   const safeTaskId = taskId.toString().substring(0, 20).replace(/[^a-zA-Z0-9_-]/g, '');
-  const safeSuggestionsId = suggestionsId.toString().substring(0, 20);
+  // Don't truncate suggestion IDs - they need to be complete for database lookup
+  const safeSuggestionsId = suggestionsId.toString();
   
   return new ActionRowBuilder()
     .addComponents(
@@ -115,7 +116,8 @@ function createCompletionNotesModal(taskId, stageIdx, stageName, useAI = false) 
 function createModifySuggestionsModal(taskId, suggestionsId, stages) {
   // Ensure IDs don't cause issues
   const safeTaskId = taskId.toString().substring(0, 20).replace(/[^a-zA-Z0-9_-]/g, '');
-  const safeSuggestionsId = suggestionsId.toString().substring(0, 20);
+  // Don't truncate suggestion IDs - they need to be complete for database lookup
+  const safeSuggestionsId = suggestionsId.toString();
   
   const modal = new ModalBuilder()
     .setCustomId(`modify_suggestions_${safeTaskId}_${safeSuggestionsId}`)
