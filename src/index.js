@@ -692,6 +692,7 @@ View with \`/task list id:${taskId}\`.`
             await interaction.deferReply();
             
             // Insert validated stages into the database
+            console.log(`DEBUG: About to insert ${suggestedStages.length} stages for task ${taskId}`);
             for (let i = 0; i < suggestedStages.length; i++) {
               const stage = suggestedStages[i];
               const idxResult = db.prepare('SELECT COUNT(*) as c FROM stages WHERE task_id=?').get(taskId);
@@ -700,9 +701,14 @@ View with \`/task list id:${taskId}\`.`
               // Clean stage name - remove markdown formatting
               const cleanName = stage.name.replace(/\*\*/g, '').trim();
               
+              console.log(`DEBUG: Inserting stage ${i}: idx=${idx}, name="${cleanName}", taskId=${taskId}`);
               db.prepare('INSERT INTO stages(task_id,idx,name,desc,created_at) VALUES(?,?,?,?,?)')
                 .run(taskId, idx, cleanName, stage.description || '', Date.now());
             }
+            
+            // Verify stages were inserted
+            const insertedStages = db.prepare('SELECT * FROM stages WHERE task_id = ? ORDER BY idx').all(taskId);
+            console.log(`DEBUG: After insertion, found ${insertedStages.length} stages for task ${taskId}:`, insertedStages.map(s => `idx=${s.idx}, name="${s.name}"`));
             
             // Update suggestion status
             db.prepare('UPDATE task_suggestions SET status = ? WHERE id = ?').run('accepted', suggestionId);

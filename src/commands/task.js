@@ -147,7 +147,19 @@ module.exports = {
         .addRoleOption(o =>
           o.setName('role')
           .setDescription('The faction role to delete')
-          .setRequired(true)))),
+          .setRequired(true)))
+      .addSubcommand(sub =>
+        sub.setName('addmember')
+        .setDescription('Add members to an existing faction')
+        .addRoleOption(o =>
+          o.setName('role')
+          .setDescription('The faction role to add members to')
+          .setRequired(true))
+        .addStringOption(o =>
+          o.setName('members')
+          .setDescription('Space-separated list of member IDs or mentions')
+          .setRequired(true)
+          .setMaxLength(500)))),
         
   // Handle autocomplete interactions
   async autocomplete(interaction) {
@@ -181,6 +193,20 @@ module.exports = {
       );
       
       return interaction.respond(filtered.slice(0, 25));
+    }
+    
+    // Handle faction role autocomplete for addmember
+    if (subcommandGroup === 'faction' && subcommand === 'addmember' && focusedOption.name === 'role') {
+      const allRoles = interaction.guild.roles.cache
+        .filter(role => !role.managed && role.name !== '@everyone')
+        .map(role => ({
+          name: `@${role.name}`,
+          value: role.id
+        }))
+        .filter(role => role.name.toLowerCase().includes(focusedOption.value.toLowerCase()))
+        .slice(0, 25);
+      
+      return interaction.respond(allRoles);
     }
     
     // Handle task ID autocomplete (existing code)
@@ -621,9 +647,8 @@ module.exports = {
           const row = db.prepare('SELECT * FROM stages WHERE task_id = ? AND done = 0 ORDER BY idx').get(id);
           
           if (!row) {
-            return interaction.reply({ 
-              content: '❌ No active stage found for this task. All stages may be completed.', 
-              ephemeral: true 
+            return interaction.editReply({ 
+              content: '❌ No active stage found for this task. All stages may be completed.'
             });
           }
           
@@ -638,7 +663,7 @@ module.exports = {
             // Continue anyway - the assignment is still valid
           }
           
-          return interaction.reply(`👤 Assigned <@${user.id}> to **${row.name}** for task \`${id}\``);
+          return interaction.editReply({ content: `👤 Assigned <@${user.id}> to **${row.name}** for task \`${id}\`` });
         } catch (error) {
           logger.error('Error assigning user to task:', error);
           if (interaction.deferred) {
@@ -1023,6 +1048,8 @@ module.exports = {
         await this.handleFactionCreate(interaction);
       } else if (subcommand === 'delete') {
         await this.handleFactionDelete(interaction);
+      } else if (subcommand === 'addmember') {
+        await this.handleFactionAddMember(interaction);
       }
     } catch (error) {
       logger.error(`Error handling faction ${subcommand}:`, error);
@@ -1081,24 +1108,40 @@ module.exports = {
       for (const memberId of memberIds) {
         try {
           const member = await interaction.guild.members.fetch(memberId);
+          
+          // Check bot permissions vs user hierarchy
+          const botMember = interaction.guild.members.me;
+          if (member.roles.highest.position >= botMember.roles.highest.position && member.id !== interaction.guild.ownerId) {
+            memberDetails.push(`❌ ${member.displayName} (hierarchy - user role too high)`);
+            failCount++;
+            continue;
+          }
+          
           await member.roles.add(role);
           
-          // Update nickname with faction prefix
-          const currentName = member.displayName;
-          const newNickname = `[${abbreviation}] ${currentName.replace(/^\[.*?\]\s*/, '')}`;
+          // Update nickname with faction prefix (skip if bot can't manage nicknames)
+          try {
+            const currentName = member.displayName;
+            const cleanName = currentName.replace(/^\[.*?\]\s*/, '');
+            const newNickname = `[${abbreviation}] ${cleanName}`;
+            
+            // Discord nickname limit is 32 characters
+            const truncatedNickname = newNickname.length > 32 ? 
+              `[${abbreviation}] ${cleanName.substring(0, 32 - abbreviation.length - 3)}` : 
+              newNickname;
+            
+            await member.setNickname(truncatedNickname);
+            memberDetails.push(`✅ ${member.displayName} (role + nickname)`);
+          } catch (nicknameError) {
+            // Role was added but nickname failed
+            memberDetails.push(`⚠️ ${member.displayName} (role added, nickname failed)`);
+          }
           
-          // Discord nickname limit is 32 characters
-          const truncatedNickname = newNickname.length > 32 ? 
-            `[${abbreviation}] ${currentName.replace(/^\[.*?\]\s*/, '').substring(0, 32 - abbreviation.length - 3)}` : 
-            newNickname;
-          
-          await member.setNickname(truncatedNickname);
-          
-          memberDetails.push(`✅ ${member.displayName}`);
           successCount++;
         } catch (memberError) {
           logger.warn(`Failed to add role/update nickname for member ${memberId}:`, memberError);
-          memberDetails.push(`❌ <@${memberId}> (failed)`);
+          const errorMsg = memberError.message.includes('Unknown Member') ? 'not found' : 'permission error';
+          memberDetails.push(`❌ <@${memberId}> (${errorMsg})`);
           failCount++;
         }
       }
@@ -1117,6 +1160,12 @@ module.exports = {
         )
         .setFooter({ text: `Faction ID: ${role.id}` })
         .setTimestamp();
+      
+      // Add faction channel message
+      embed.addFields({
+        name: '📢 Next Steps',
+        value: `Please create a faction post in <#1293398635635150918> to introduce your faction to the community!`
+      });
       
       await interaction.editReply({ embeds: [embed] });
       
@@ -1191,6 +1240,103 @@ module.exports = {
     } catch (error) {
       logger.error('Error deleting faction role:', error);
       await interaction.editReply(`❌ Failed to delete faction role: ${error.message}`);
+    }
+  },
+
+  /**
+   * Handle faction add member command
+   * @param {Object} interaction - Discord interaction object
+   */
+  async handleFactionAddMember(interaction) {
+    await interaction.deferReply();
+    
+    const role = interaction.options.getRole('role');
+    const membersString = interaction.options.getString('members');
+    
+    if (!role) {
+      return interaction.editReply('❌ Role not found.');
+    }
+    
+    // Parse member mentions and IDs
+    const memberIds = membersString.match(/\d{17,19}/g) || [];
+    if (memberIds.length === 0) {
+      return interaction.editReply('❌ No valid member IDs or mentions found. Please mention users or provide their IDs.');
+    }
+    
+    // Generate faction abbreviation from role name
+    const abbreviation = this.generateFactionAbbreviation(role.name);
+    
+    try {
+      let successCount = 0;
+      let failCount = 0;
+      const memberDetails = [];
+      
+      // Add role to members and update nicknames
+      for (const memberId of memberIds) {
+        try {
+          const member = await interaction.guild.members.fetch(memberId);
+          
+          // Check if member already has the role
+          if (member.roles.cache.has(role.id)) {
+            memberDetails.push(`⚠️ ${member.displayName} (already has role)`);
+            continue;
+          }
+          
+          // Check bot permissions vs user hierarchy
+          const botMember = interaction.guild.members.me;
+          if (member.roles.highest.position >= botMember.roles.highest.position && member.id !== interaction.guild.ownerId) {
+            memberDetails.push(`❌ ${member.displayName} (hierarchy - user role too high)`);
+            failCount++;
+            continue;
+          }
+          
+          await member.roles.add(role);
+          
+          // Update nickname with faction prefix (skip if bot can't manage nicknames)
+          try {
+            const currentName = member.displayName;
+            const cleanName = currentName.replace(/^\[.*?\]\s*/, '');
+            const newNickname = `[${abbreviation}] ${cleanName}`;
+            
+            // Discord nickname limit is 32 characters
+            const truncatedNickname = newNickname.length > 32 ? 
+              `[${abbreviation}] ${cleanName.substring(0, 32 - abbreviation.length - 3)}` : 
+              newNickname;
+            
+            await member.setNickname(truncatedNickname);
+            memberDetails.push(`✅ ${member.displayName} (role + nickname)`);
+          } catch (nicknameError) {
+            // Role was added but nickname failed
+            memberDetails.push(`⚠️ ${member.displayName} (role added, nickname failed)`);
+          }
+          
+          successCount++;
+        } catch (memberError) {
+          logger.warn(`Failed to add role/update nickname for member ${memberId}:`, memberError);
+          memberDetails.push(`❌ <@${memberId}> (failed)`);
+          failCount++;
+        }
+      }
+      
+      // Create success embed
+      const embed = new EmbedBuilder()
+        .setTitle('👥 Members Added to Faction!')
+        .setDescription(`Added members to **${role.name}**`)
+        .setColor(role.hexColor)
+        .addFields(
+          { name: 'Role', value: `<@&${role.id}>`, inline: true },
+          { name: 'Abbreviation', value: `[${abbreviation}]`, inline: true },
+          { name: 'Members Processed', value: `${successCount} successful, ${failCount} failed` },
+          { name: 'Member Status', value: memberDetails.join('\n') || 'None' }
+        )
+        .setFooter({ text: `Faction ID: ${role.id}` })
+        .setTimestamp();
+      
+      await interaction.editReply({ embeds: [embed] });
+      
+    } catch (error) {
+      logger.error('Error adding members to faction role:', error);
+      await interaction.editReply(`❌ Failed to add members to faction role: ${error.message}`);
     }
   },
 
