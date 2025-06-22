@@ -329,7 +329,16 @@ class QueryBuilder {
           }
           break;
         case 'task_suggestions':
-          if (args.length >= 3) {
+          if (args.length >= 4) {
+            item = {
+              id: args[0], // Use explicit ID
+              task_id: args[1],
+              stage_suggestions: args[2],
+              created_at: args[3] || Date.now(),
+              status: args[4] || 'pending'
+            };
+          } else if (args.length >= 3) {
+            // Fallback for old format
             item = {
               id: Date.now(), // Use timestamp as ID for auto-increment behavior
               task_id: args[0],
@@ -439,10 +448,10 @@ class QueryBuilder {
         saveItem(this.tableName, item);
         updatedCount = 1;
       }
-    } else if (this.query.toLowerCase().includes('set status =') && this.query.toLowerCase().includes('where rowid =')) {
+    } else if (this.query.toLowerCase().includes('set status =') && (this.query.toLowerCase().includes('where rowid =') || this.query.toLowerCase().includes('where id ='))) {
       const status = args[0];
-      const rowid = args[1];
-      const item = items.find(i => i.id == rowid);
+      const id = args[1];
+      const item = items.find(i => i.id == id);
       if (item) {
         item.status = status;
         saveItem(this.tableName, item);

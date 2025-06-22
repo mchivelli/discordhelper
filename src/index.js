@@ -215,7 +215,7 @@ client.on(Events.InteractionCreate, async interaction => {
           const suggestionId = parts[3];
           
           // Get the original suggestions
-          const suggestion = db.prepare('SELECT * FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+          const suggestion = db.prepare('SELECT * FROM task_suggestions WHERE id = ?').get(suggestionId);
           
           if (!suggestion) {
             return interaction.reply({ 
@@ -260,7 +260,7 @@ client.on(Events.InteractionCreate, async interaction => {
           }
           
           // Update suggestion status
-          db.prepare('UPDATE task_suggestions SET status = ? WHERE rowid = ?').run('modified', suggestionId);
+          db.prepare('UPDATE task_suggestions SET status = ? WHERE id = ?').run('modified', suggestionId);
           
           // Get task details for the response
           const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);
@@ -489,12 +489,11 @@ View with \`/task list id:${taskId}\`.`
               const { generateTaskStages } = require('./utils/ai');
               const suggestedStages = await generateTaskStages(taskName, taskDescription);
               
-              // Store suggestions in database
+              // Store suggestions in database with explicit ID
+              const suggestionId = `sug_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
               const suggestionResult = db.prepare(
-                'INSERT INTO task_suggestions(task_id, stage_suggestions, created_at) VALUES(?, ?, ?)'
-              ).run(newTaskId, JSON.stringify(suggestedStages), Date.now());
-              
-              const suggestionId = suggestionResult.lastInsertRowid;
+                'INSERT INTO task_suggestions(id, task_id, stage_suggestions, created_at) VALUES(?, ?, ?, ?)'
+              ).run(suggestionId, newTaskId, JSON.stringify(suggestedStages), Date.now());
               
               // Create embed to display suggestions
               const suggestionsEmbed = new EmbedBuilder()
@@ -648,7 +647,7 @@ View with \`/task list id:${taskId}\`.`
             const suggestionId = customIdParts[2];
             
             // Get the suggested stages from the database
-            const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+            const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE id = ?').get(suggestionId);
             if (!suggestion) {
               return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
             }
@@ -685,7 +684,7 @@ View with \`/task list id:${taskId}\`.`
             }
             
             // Update suggestion status
-            db.prepare('UPDATE task_suggestions SET status = ? WHERE rowid = ?').run('accepted', suggestionId);
+            db.prepare('UPDATE task_suggestions SET status = ? WHERE id = ?').run('accepted', suggestionId);
             
             // Get task details for the response
             const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);
@@ -714,7 +713,7 @@ View stages with \`/task list id:${taskId}\`.`,
             console.log('Modify button pressed. customId parts:', customIdParts);
             
             // Get the suggested stages from the database
-            const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE rowid = ?').get(suggestionId);
+            const suggestion = db.prepare('SELECT stage_suggestions FROM task_suggestions WHERE id = ?').get(suggestionId);
             if (!suggestion) {
               return interaction.reply({ content: 'Unable to find stage suggestions.', ephemeral: true });
             }
@@ -742,7 +741,7 @@ View stages with \`/task list id:${taskId}\`.`,
             const suggestionId = customIdParts[2];
             
             // Update suggestion status
-            db.prepare('UPDATE task_suggestions SET status = ? WHERE rowid = ?').run('skipped', suggestionId);
+            db.prepare('UPDATE task_suggestions SET status = ? WHERE id = ?').run('skipped', suggestionId);
             
             // Get task details for the response
             const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);

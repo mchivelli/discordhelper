@@ -326,12 +326,11 @@ module.exports = {
               // Generate stage suggestions using AI with contents field and optional generation instructions
               const suggestedStages = await generateTaskStages(name, contents || name, deadline, generateInstructions);
               
-              // Store suggestions in database
+              // Store suggestions in database with explicit ID
+              const suggestionId = `sug_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
               const suggestionResult = db.prepare(
-                'INSERT INTO task_suggestions(task_id, stage_suggestions, created_at) VALUES(?, ?, ?)'
-              ).run(id, JSON.stringify(suggestedStages), Date.now());
-              
-              const suggestionId = suggestionResult.lastInsertRowid;
+                'INSERT INTO task_suggestions(id, task_id, stage_suggestions, created_at) VALUES(?, ?, ?, ?)'
+              ).run(suggestionId, id, JSON.stringify(suggestedStages), Date.now());
               
               // Create embed to display suggestions
               const suggestionsEmbed = new EmbedBuilder()
