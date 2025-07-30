@@ -16,9 +16,19 @@ logger.info(`Data directory ensured at: ${dataDir}`);
 const rateLimits = new Map();
 const COOLDOWN_DURATION = 3000; // 3 seconds
 
+console.log('Loading database...');
 const db = require('./utils/db');
+console.log('Database loaded');
+
+console.log('Loading AI utilities...');
 const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, saveChatSummary } = require('./utils/ai');
+console.log('AI utilities loaded');
+
+console.log('Loading patch utilities...');
 const { generatePatchAnnouncement, postChangelogEntry } = require('./utils/patch-utils');
+console.log('Patch utilities loaded');
+
+console.log('Creating Discord client...');
 const client = new Client({ 
   intents: [
     GatewayIntentBits.Guilds, 
@@ -27,26 +37,35 @@ const client = new Client({
   ]
 });
 client.commands = new Collection();
+console.log('Discord client created');
 
 // Initialize changelog settings object
 client.changelogSettings = {};
 
 // Load commands
+console.log('Loading commands...');
 const commandFiles = fs.readdirSync(path.join(__dirname, 'commands')).filter(f => f.endsWith('.js'));
+console.log(`Found ${commandFiles.length} command files: ${commandFiles.join(', ')}`);
 logger.info(`Loading ${commandFiles.length} commands...`);
 
 for (const file of commandFiles) {
+  console.log(`Loading command: ${file}`);
   try {
     const command = require(`./commands/${file}`);
     client.commands.set(command.data.name, command);
     logger.info(`Loaded command: ${command.data.name}`);
+    console.log(`Successfully loaded: ${command.data.name}`);
   } catch (error) {
     logger.error(`Failed to load command ${file}:`, error);
+    console.log(`Failed to load ${file}:`, error);
   }
 }
+console.log('Commands loaded successfully');
 
 // Set up daily backups if in production
+console.log('Setting up production features...');
 if (process.env.NODE_ENV === 'production') {
+  console.log('In production mode, setting up backup cron job...');
   cron.schedule('0 0 * * *', () => { // Daily at midnight
     try {
       const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\./g, '-');
@@ -87,9 +106,15 @@ if (process.env.NODE_ENV === 'production') {
       logger.error('Database backup failed:', error);
     }
   });
+  console.log('Backup cron job setup complete');
+} else {
+  console.log('Not in production mode, skipping backup setup');
 }
+console.log('Production features setup complete');
 
+console.log('Setting up Discord event handlers...');
 client.on(Events.ClientReady, () => {
+  console.log('ClientReady event fired!');
   logger.info(`✅ SUCCESS: Logged in as ${client.user.tag}`);
   
   // Load changelog channel settings from database or environment variables
@@ -174,16 +199,21 @@ client.on(Events.ClientReady, () => {
   });
   
   logger.info('✅ Bot is ready to handle interactions - Chat summarization is active!');
+  console.log('ClientReady handler completed');
 });
 
 // Initialize announcements array
+console.log('Initializing client collections...');
 client.announcements = [];
 
 // Initialize temporary storage for AI-generated stage suggestions
 client.stageSuggestions = new Map();
+console.log('Client collections initialized');
 
 // Add a basic health check server for Docker
+console.log('Setting up health check server...');
 if (process.env.NODE_ENV === 'production') {
+  console.log('Starting health check server for production...');
   const http = require('http');
   let HEALTH_PORT = parseInt(process.env.HEALTH_PORT) || 3000;
   
@@ -240,8 +270,11 @@ if (process.env.NODE_ENV === 'production') {
   });
 } else {
   logger.info('Skipping health check server (not in production mode)');
+  console.log('Health check server setup skipped (development mode)');
 }
+console.log('Health check server setup complete');
 
+console.log('Setting up interaction handler...');
 client.on(Events.InteractionCreate, async interaction => {
   try {
     // Only apply rate limiting to interactions that can be replied to
@@ -1622,8 +1655,10 @@ Add stages manually with \`/task add-stage\`.`,
     }
   }
 });
+console.log('Interaction handler setup complete');
 
 // Add message listener for chat summarization
+console.log('Setting up message handler...');
 client.on(Events.MessageCreate, async message => {
   // Skip bot messages and DMs
   if (message.author.bot || !message.guild) {
@@ -1642,10 +1677,14 @@ client.on(Events.MessageCreate, async message => {
     logger.error('Error storing message for chat summary:', error);
   }
 });
+console.log('Message handler setup complete');
 
 // Start Discord bot
+console.log('All setup complete, starting Discord login...');
 logger.info('Starting Discord bot login...');
 client.login(process.env.DISCORD_TOKEN).catch(error => {
   logger.error('❌ Discord login failed:', error);
+  console.log('Discord login failed:', error);
   process.exit(1);
 });
+console.log('Login call initiated');
