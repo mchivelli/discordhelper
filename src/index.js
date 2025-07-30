@@ -119,37 +119,19 @@ client.on(Events.ClientReady, () => {
   // Load changelog channel settings from database or environment variables
   console.log('🔄 DEBUG: Loading changelog channel settings...');
   try {
-    // First check database settings
-    const settingsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='bot_settings'").get();
-    if (settingsTable) {
-      const changelogChannelId = db.prepare('SELECT value FROM bot_settings WHERE key = ?').get('changelog_channel_id')?.value;
-      if (changelogChannelId) {
-        client.changelogSettings.channelId = changelogChannelId;
-        logger.info(`Loaded changelog channel ID from database: ${changelogChannelId}`);
-      }
-    }
-    
-    // If not in database, check environment variable
-    if (!client.changelogSettings.channelId && process.env.CHANGELOG_CHANNEL_ID) {
+    // For file-based database, just use environment variable directly
+    if (process.env.CHANGELOG_CHANNEL_ID) {
       client.changelogSettings.channelId = process.env.CHANGELOG_CHANNEL_ID;
       logger.info(`Loaded changelog channel ID from environment: ${process.env.CHANGELOG_CHANNEL_ID}`);
-      
-      // Save to database for future use
-      try {
-        if (!settingsTable) {
-          db.exec('CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-        }
-        db.prepare('INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)')
-          .run('changelog_channel_id', process.env.CHANGELOG_CHANNEL_ID);
-      } catch (dbError) {
-        logger.warn('Could not save changelog channel to database:', dbError);
-      }
     }
+    console.log('🔄 DEBUG: Changelog settings loaded successfully');
   } catch (error) {
     logger.error('Failed to load changelog settings:', error);
+    console.log('🔄 DEBUG: Error in changelog settings:', error);
   }
   
   // Set up daily reminders
+  console.log('🔄 DEBUG: Setting up daily reminders cron job...');
   cron.schedule(process.env.REMINDER_CRON || '0 9 * * *', () => {
     client.guilds.cache.forEach(guild => {
       const ch = guild.systemChannel;
@@ -160,8 +142,10 @@ client.on(Events.ClientReady, () => {
       }
     });
   });
+  console.log('🔄 DEBUG: Daily reminders cron job setup complete');
 
   // Set up daily automatic chat summarization
+  console.log('🔄 DEBUG: Setting up daily summary cron job...');
   cron.schedule(process.env.SUMMARY_CRON || '0 8 * * *', async () => {
     logger.info('Starting daily automatic chat summarization...');
     
@@ -218,8 +202,11 @@ client.on(Events.ClientReady, () => {
     
     logger.info('Daily automatic chat summarization completed');
   });
+  console.log('🔄 DEBUG: Daily summary cron job setup complete');
   
+  console.log('🔄 DEBUG: About to complete ClientReady setup...');
   logger.info('✅ Bot is ready to handle interactions - Chat summarization is active!');
+  console.log('🔄 DEBUG: ClientReady handler completed successfully!');
 });
 
 // Initialize announcements array
