@@ -7,7 +7,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('summarize')
     .setDescription('Generate AI-powered summaries of Discord chat discussions')
-    .addSubcommand(sub => 
+          .addSubcommand(sub => 
       sub.setName('channel')
       .setDescription('Summarize messages from a specific channel')
       .addChannelOption(o => 
@@ -19,7 +19,13 @@ module.exports = {
         .setDescription('Hours to look back (1-168, default: 24)')
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(168))) // Max 1 week
+        .setMaxValue(168))
+      .addIntegerOption(o =>
+        o.setName('messages')
+        .setDescription('Number of recent messages to summarize (10-1000)')
+        .setRequired(false)
+        .setMinValue(10)
+        .setMaxValue(1000))) // Max 1000 messages
     .addSubcommand(sub => 
       sub.setName('server')
       .setDescription('Summarize messages from the entire server')
@@ -28,7 +34,13 @@ module.exports = {
         .setDescription('Hours to look back (1-168, default: 24)')
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(168)))
+        .setMaxValue(168))
+      .addIntegerOption(o =>
+        o.setName('messages')
+        .setDescription('Number of recent messages to summarize (10-1000)')
+        .setRequired(false)
+        .setMinValue(10)
+        .setMaxValue(1000)))
     .addSubcommand(sub => 
       sub.setName('history')
       .setDescription('View recent summaries')
@@ -145,6 +157,7 @@ module.exports = {
   async handleChannelSummary(interaction) {
     const channel = interaction.options.getChannel('channel') || interaction.channel;
     const hours = interaction.options.getInteger('hours') || 24;
+    const messageLimit = interaction.options.getInteger('messages');
     const guildId = interaction.guild.id;
     
     // Verify permissions
@@ -157,16 +170,20 @@ module.exports = {
 
     try {
       // Get recent messages from database
-      const messages = getRecentMessages(db, guildId, channel.id, hours);
+      const messages = getRecentMessages(db, guildId, channel.id, hours, messageLimit);
       
       if (!messages || messages.length === 0) {
-        await interaction.editReply({ 
-          content: `📭 No messages found in ${channel} from the last ${hours} hour(s). Make sure I'm tracking messages in this channel.` 
-        });
+        const noMessagesContent = messageLimit 
+          ? `📭 No messages found in ${channel}. Make sure I'm tracking messages in this channel.`
+          : `📭 No messages found in ${channel} from the last ${hours} hour(s). Make sure I'm tracking messages in this channel.`;
+          
+        await interaction.editReply({ content: noMessagesContent });
         return;
       }
 
-      const timeRange = hours === 24 ? 'Last 24 Hours' : `Last ${hours} Hours`;
+      const timeRange = messageLimit 
+        ? `Last ${messages.length} Messages`
+        : hours === 24 ? 'Last 24 Hours' : `Last ${hours} Hours`;
       
       // Generate summary
       const summary = await generateChatSummary(messages, timeRange, channel.name);
@@ -199,6 +216,7 @@ module.exports = {
 
   async handleServerSummary(interaction) {
     const hours = interaction.options.getInteger('hours') || 24;
+    const messageLimit = interaction.options.getInteger('messages');
     const guildId = interaction.guild.id;
     
     // Check if user has manage messages permission for server-wide summaries
@@ -211,16 +229,20 @@ module.exports = {
 
     try {
       // Get recent messages from all channels
-      const messages = getRecentMessages(db, guildId, null, hours);
+      const messages = getRecentMessages(db, guildId, null, hours, messageLimit);
       
       if (!messages || messages.length === 0) {
-        await interaction.editReply({ 
-          content: `📭 No messages found in this server from the last ${hours} hour(s). Make sure I'm tracking messages in your channels.` 
-        });
+        const noMessagesContent = messageLimit
+          ? `📭 No messages found in this server. Make sure I'm tracking messages in your channels.`
+          : `📭 No messages found in this server from the last ${hours} hour(s). Make sure I'm tracking messages in your channels.`;
+          
+        await interaction.editReply({ content: noMessagesContent });
         return;
       }
 
-      const timeRange = hours === 24 ? 'Last 24 Hours' : `Last ${hours} Hours`;
+      const timeRange = messageLimit
+        ? `Last ${messages.length} Messages`
+        : hours === 24 ? 'Last 24 Hours' : `Last ${hours} Hours`;
       
       // Generate summary
       const summary = await generateChatSummary(messages, timeRange, 'the server');

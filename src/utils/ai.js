@@ -450,22 +450,46 @@ Keep it concise but informative, around 200-300 words.`;
 }
 
 // Get recent messages from database
-function getRecentMessages(db, guildId, channelId = null, hours = 24) {
+function getRecentMessages(db, guildId, channelId = null, hours = 24, messageLimit = null) {
   try {
-    const cutoffTime = Date.now() - (hours * 60 * 60 * 1000);
+    let query, params;
     
-    let query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp > ?';
-    let params = [guildId, cutoffTime];
-    
-    if (channelId) {
-      query += ' AND channel_id = ?';
-      params.push(channelId);
+    // If messageLimit is provided, get the most recent N messages
+    if (messageLimit) {
+      query = 'SELECT * FROM chat_messages WHERE guild_id = ?';
+      params = [guildId];
+      
+      if (channelId) {
+        query += ' AND channel_id = ?';
+        params.push(channelId);
+      }
+      
+      query += ' ORDER BY timestamp DESC LIMIT ?';
+      params.push(messageLimit);
+      
+      const stmt = db.prepare(query);
+      const messages = stmt.all(...params);
+      
+      // Reverse to get chronological order
+      return messages.reverse();
+    } 
+    // Otherwise, get messages from the last X hours
+    else {
+      const cutoffTime = Date.now() - (hours * 60 * 60 * 1000);
+      
+      query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp > ?';
+      params = [guildId, cutoffTime];
+      
+      if (channelId) {
+        query += ' AND channel_id = ?';
+        params.push(channelId);
+      }
+      
+      query += ' ORDER BY timestamp ASC';
+      
+      const stmt = db.prepare(query);
+      return stmt.all(...params);
     }
-    
-    query += ' ORDER BY timestamp ASC';
-    
-    const stmt = db.prepare(query);
-    return stmt.all(...params);
   } catch (error) {
     console.error('Error getting recent messages:', error);
     return [];
