@@ -16,38 +16,55 @@ logger.info(`Data directory ensured at: ${dataDir}`);
 const rateLimits = new Map();
 const COOLDOWN_DURATION = 3000; // 3 seconds
 
+console.log('🔄 DEBUG: Loading database...');
 const db = require('./utils/db');
-const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, saveChatSummary } = require('./utils/ai');
-const { generatePatchAnnouncement, postChangelogEntry } = require('./utils/patch-utils');
+console.log('🔄 DEBUG: Database loaded successfully');
 
+console.log('🔄 DEBUG: Loading AI utilities...');
+const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, saveChatSummary } = require('./utils/ai');
+console.log('🔄 DEBUG: AI utilities loaded successfully');
+console.log('🔄 DEBUG: Loading patch utilities...');
+const { generatePatchAnnouncement, postChangelogEntry } = require('./utils/patch-utils');
+console.log('🔄 DEBUG: Patch utilities loaded successfully');
+
+console.log('🔄 DEBUG: Creating Discord client...');
 const client = new Client({ 
   intents: [
     GatewayIntentBits.Guilds, 
-    GatewayIntentBits.GuildMessages, 
+    GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
-  ] 
+  ]
 });
+console.log('🔄 DEBUG: Discord client created successfully');
 client.commands = new Collection();
 
 // Initialize changelog settings object
 client.changelogSettings = {};
 
 // Load commands
+console.log('🔄 DEBUG: Starting command loading...');
 const commandFiles = fs.readdirSync(path.join(__dirname, 'commands')).filter(f => f.endsWith('.js'));
 logger.info(`Loading ${commandFiles.length} commands...`);
+console.log(`🔄 DEBUG: Command files found: ${commandFiles.join(', ')}`);
 
 for (const file of commandFiles) {
+  console.log(`🔄 DEBUG: Loading command file: ${file}`);
   try {
     const command = require(`./commands/${file}`);
     client.commands.set(command.data.name, command);
     logger.info(`Loaded command: ${command.data.name}`);
+    console.log(`🔄 DEBUG: Successfully loaded command: ${command.data.name}`);
   } catch (error) {
     logger.error(`Failed to load command ${file}:`, error);
+    console.log(`🔄 DEBUG: Failed to load command ${file}:`, error);
   }
 }
+console.log('🔄 DEBUG: Command loading complete');
 
 // Set up daily backups if in production
+console.log('🔄 DEBUG: Setting up production features...');
 if (process.env.NODE_ENV === 'production') {
+  console.log('🔄 DEBUG: Setting up daily backup cron job...');
   cron.schedule('0 0 * * *', () => { // Daily at midnight
     try {
       const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\./g, '-');
@@ -88,8 +105,13 @@ if (process.env.NODE_ENV === 'production') {
       logger.error('Database backup failed:', error);
     }
   });
+  console.log('🔄 DEBUG: Daily backup cron job setup complete');
+} else {
+  console.log('🔄 DEBUG: Not in production mode, skipping backup setup');
 }
+console.log('🔄 DEBUG: Production features setup complete');
 
+console.log('🔄 DEBUG: Setting up Discord event handlers...');
 client.on(Events.ClientReady, () => {
   logger.info(`✅ SUCCESS: Logged in as ${client.user.tag}`);
   
