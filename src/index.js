@@ -1660,13 +1660,37 @@ Add stages manually with \`/task add-stage\`.`,
 console.log('🔄 DEBUG: Setting up MessageCreate handler...');
 // Add message listener for chat summarization
 client.on(Events.MessageCreate, async message => {
+  logger.info(`[MessageCreate] Received message from ${message.author.tag} in #${message.channel.name}`);
+  
+  // 1. Check if the message is from a bot
+  if (message.author.bot) {
+    logger.info(`[MessageCreate] Ignored bot message from ${message.author.tag}`);
+    return;
+  }
+  
+  // 2. Check if the message is in a guild
+  if (!message.guild) {
+    logger.info(`[MessageCreate] Ignored DM from ${message.author.tag}`);
+    return;
+  }
+
+  // 3. Check bot's permissions in the channel
+  const channelPerms = message.channel.permissionsFor(message.guild.members.me);
+  if (!channelPerms || !channelPerms.has('ViewChannel')) {
+    logger.warn(`[MessageCreate] Missing 'View Channel' permission in #${message.channel.name}`);
+    return;
+  }
+  if (!channelPerms.has('ReadMessageHistory')) {
+    logger.warn(`[MessageCreate] Missing 'Read Message History' permission in #${message.channel.name}`);
+    return;
+  }
+
+  logger.info(`[MessageCreate] Storing message from ${message.author.tag}...`);
   try {
-    // Store non-bot messages for summarization
-    if (!message.author.bot && message.guild) {
-      storeChatMessage(db, message);
-    }
+    storeChatMessage(db, message);
+    logger.info(`[MessageCreate] Successfully stored message ID ${message.id}`);
   } catch (error) {
-    logger.error('Error processing message for chat summary:', error);
+    logger.error('[MessageCreate] Error storing message:', error);
   }
 });
 
