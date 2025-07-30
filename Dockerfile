@@ -35,5 +35,5 @@ ENV DB_PATH=/app/data/database.sqlite
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:${HEALTH_PORT:-3000}/health || exit 1
 
-# Use startup script to ensure database, commands, and AI are ready
-CMD ["/bin/sh", "start.sh"]
+# Run bot directly - startup checks are handled in the application
+CMD ["node", "src/index.js"]

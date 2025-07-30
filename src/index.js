@@ -91,7 +91,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 client.on(Events.ClientReady, () => {
-  logger.info(`Logged in as ${client.user.tag}`);
+  logger.info(`✅ SUCCESS: Logged in as ${client.user.tag}`);
   
   // Load changelog channel settings from database or environment variables
   try {
@@ -195,7 +195,7 @@ client.on(Events.ClientReady, () => {
     logger.info('Daily automatic chat summarization completed');
   });
   
-  logger.info('Bot is ready to handle interactions');
+  logger.info('✅ Bot is ready to handle interactions - Chat summarization is active!');
 });
 
 // Initialize announcements array
@@ -207,7 +207,7 @@ client.stageSuggestions = new Map();
 // Add a basic health check server for Docker
 if (process.env.NODE_ENV === 'production') {
   const http = require('http');
-  const HEALTH_PORT = process.env.HEALTH_PORT || 3000;
+  let HEALTH_PORT = parseInt(process.env.HEALTH_PORT) || 3000;
   
   const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -230,19 +230,38 @@ if (process.env.NODE_ENV === 'production') {
     }
   });
   
-  server.listen(HEALTH_PORT, () => {
-    console.log(`Health check server running on port ${HEALTH_PORT}`);
-  });
+  // Try to start health check server with error handling
+  const startHealthServer = (port, maxRetries = 5) => {
+    server.listen(port, () => {
+      logger.info(`Health check server running on port ${port}`);
+    });
+    
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE' && maxRetries > 0) {
+        logger.warn(`Port ${port} in use, trying port ${port + 1}`);
+        server.close();
+        setTimeout(() => startHealthServer(port + 1, maxRetries - 1), 1000);
+      } else if (err.code === 'EADDRINUSE') {
+        logger.error('Could not start health check server - all ports in use. Bot will continue without health check.');
+      } else {
+        logger.error('Health check server error:', err);
+      }
+    });
+  };
+  
+  startHealthServer(HEALTH_PORT);
   
   // Graceful shutdown handling
   process.on('SIGTERM', () => {
-    console.log('SIGTERM signal received, shutting down gracefully');
+    logger.info('SIGTERM signal received, shutting down gracefully');
     server.close(() => {
-      console.log('HTTP server closed');
+      logger.info('HTTP server closed');
       client.destroy();
       process.exit(0);
     });
   });
+} else {
+  logger.info('Skipping health check server (not in production mode)');
 }
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -1638,4 +1657,9 @@ client.on(Events.MessageCreate, async message => {
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// Start Discord bot
+logger.info('🔄 Starting Discord bot login...');
+client.login(process.env.DISCORD_TOKEN).catch(error => {
+  logger.error('❌ Discord login failed:', error);
+  process.exit(1);
+});
