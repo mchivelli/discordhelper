@@ -16,18 +16,9 @@ logger.info(`Data directory ensured at: ${dataDir}`);
 const rateLimits = new Map();
 const COOLDOWN_DURATION = 3000; // 3 seconds
 
-console.log('🔄 DEBUG: Loading database...');
 const db = require('./utils/db');
-console.log('🔄 DEBUG: Database loaded successfully');
-
-console.log('🔄 DEBUG: Loading AI utilities...');
 const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, saveChatSummary } = require('./utils/ai');
-console.log('🔄 DEBUG: AI utilities loaded successfully');
-console.log('🔄 DEBUG: Loading patch utilities...');
 const { generatePatchAnnouncement, postChangelogEntry } = require('./utils/patch-utils');
-console.log('🔄 DEBUG: Patch utilities loaded successfully');
-
-console.log('🔄 DEBUG: Creating Discord client...');
 const client = new Client({ 
   intents: [
     GatewayIntentBits.Guilds, 
@@ -35,36 +26,27 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
-console.log('🔄 DEBUG: Discord client created successfully');
 client.commands = new Collection();
 
 // Initialize changelog settings object
 client.changelogSettings = {};
 
 // Load commands
-console.log('🔄 DEBUG: Starting command loading...');
 const commandFiles = fs.readdirSync(path.join(__dirname, 'commands')).filter(f => f.endsWith('.js'));
 logger.info(`Loading ${commandFiles.length} commands...`);
-console.log(`🔄 DEBUG: Command files found: ${commandFiles.join(', ')}`);
 
 for (const file of commandFiles) {
-  console.log(`🔄 DEBUG: Loading command file: ${file}`);
   try {
     const command = require(`./commands/${file}`);
     client.commands.set(command.data.name, command);
     logger.info(`Loaded command: ${command.data.name}`);
-    console.log(`🔄 DEBUG: Successfully loaded command: ${command.data.name}`);
   } catch (error) {
     logger.error(`Failed to load command ${file}:`, error);
-    console.log(`🔄 DEBUG: Failed to load command ${file}:`, error);
   }
 }
-console.log('🔄 DEBUG: Command loading complete');
 
 // Set up daily backups if in production
-console.log('🔄 DEBUG: Setting up production features...');
 if (process.env.NODE_ENV === 'production') {
-  console.log('🔄 DEBUG: Setting up daily backup cron job...');
   cron.schedule('0 0 * * *', () => { // Daily at midnight
     try {
       const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\./g, '-');
@@ -105,33 +87,23 @@ if (process.env.NODE_ENV === 'production') {
       logger.error('Database backup failed:', error);
     }
   });
-  console.log('🔄 DEBUG: Daily backup cron job setup complete');
-} else {
-  console.log('🔄 DEBUG: Not in production mode, skipping backup setup');
 }
-console.log('🔄 DEBUG: Production features setup complete');
 
-console.log('🔄 DEBUG: Setting up Discord event handlers...');
 client.on(Events.ClientReady, () => {
-  console.log('🔄 DEBUG: ClientReady event fired!');
   logger.info(`✅ SUCCESS: Logged in as ${client.user.tag}`);
   
   // Load changelog channel settings from database or environment variables
-  console.log('🔄 DEBUG: Loading changelog channel settings...');
   try {
     // For file-based database, just use environment variable directly
     if (process.env.CHANGELOG_CHANNEL_ID) {
       client.changelogSettings.channelId = process.env.CHANGELOG_CHANNEL_ID;
       logger.info(`Loaded changelog channel ID from environment: ${process.env.CHANGELOG_CHANNEL_ID}`);
     }
-    console.log('🔄 DEBUG: Changelog settings loaded successfully');
   } catch (error) {
     logger.error('Failed to load changelog settings:', error);
-    console.log('🔄 DEBUG: Error in changelog settings:', error);
   }
   
   // Set up daily reminders
-  console.log('🔄 DEBUG: Setting up daily reminders cron job...');
   cron.schedule(process.env.REMINDER_CRON || '0 9 * * *', () => {
     client.guilds.cache.forEach(guild => {
       const ch = guild.systemChannel;
@@ -142,10 +114,8 @@ client.on(Events.ClientReady, () => {
       }
     });
   });
-  console.log('🔄 DEBUG: Daily reminders cron job setup complete');
 
   // Set up daily automatic chat summarization
-  console.log('🔄 DEBUG: Setting up daily summary cron job...');
   cron.schedule(process.env.SUMMARY_CRON || '0 8 * * *', async () => {
     logger.info('Starting daily automatic chat summarization...');
     
@@ -202,11 +172,8 @@ client.on(Events.ClientReady, () => {
     
     logger.info('Daily automatic chat summarization completed');
   });
-  console.log('🔄 DEBUG: Daily summary cron job setup complete');
   
-  console.log('🔄 DEBUG: About to complete ClientReady setup...');
   logger.info('✅ Bot is ready to handle interactions - Chat summarization is active!');
-  console.log('🔄 DEBUG: ClientReady handler completed successfully!');
 });
 
 // Initialize announcements array
@@ -275,7 +242,6 @@ if (process.env.NODE_ENV === 'production') {
   logger.info('Skipping health check server (not in production mode)');
 }
 
-console.log('🔄 DEBUG: Setting up InteractionCreate handler...');
 client.on(Events.InteractionCreate, async interaction => {
   try {
     // Only apply rate limiting to interactions that can be replied to
@@ -1657,46 +1623,28 @@ Add stages manually with \`/task add-stage\`.`,
   }
 });
 
-console.log('🔄 DEBUG: Setting up MessageCreate handler...');
 // Add message listener for chat summarization
 client.on(Events.MessageCreate, async message => {
-  logger.info(`[MessageCreate] Received message from ${message.author.tag} in #${message.channel.name}`);
-  
-  // 1. Check if the message is from a bot
-  if (message.author.bot) {
-    logger.info(`[MessageCreate] Ignored bot message from ${message.author.tag}`);
-    return;
-  }
-  
-  // 2. Check if the message is in a guild
-  if (!message.guild) {
-    logger.info(`[MessageCreate] Ignored DM from ${message.author.tag}`);
+  // Skip bot messages and DMs
+  if (message.author.bot || !message.guild) {
     return;
   }
 
-  // 3. Check bot's permissions in the channel
+  // Check bot's permissions in the channel
   const channelPerms = message.channel.permissionsFor(message.guild.members.me);
-  if (!channelPerms || !channelPerms.has('ViewChannel')) {
-    logger.warn(`[MessageCreate] Missing 'View Channel' permission in #${message.channel.name}`);
-    return;
-  }
-  if (!channelPerms.has('ReadMessageHistory')) {
-    logger.warn(`[MessageCreate] Missing 'Read Message History' permission in #${message.channel.name}`);
+  if (!channelPerms || !channelPerms.has('ViewChannel') || !channelPerms.has('ReadMessageHistory')) {
     return;
   }
 
-  logger.info(`[MessageCreate] Storing message from ${message.author.tag}...`);
   try {
     storeChatMessage(db, message);
-    logger.info(`[MessageCreate] Successfully stored message ID ${message.id}`);
   } catch (error) {
-    logger.error('[MessageCreate] Error storing message:', error);
+    logger.error('Error storing message for chat summary:', error);
   }
 });
 
-console.log('🔄 DEBUG: All event handlers setup complete!');
 // Start Discord bot
-logger.info('🔄 Starting Discord bot login...');
+logger.info('Starting Discord bot login...');
 client.login(process.env.DISCORD_TOKEN).catch(error => {
   logger.error('❌ Discord login failed:', error);
   process.exit(1);

@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField } = require('discord.js');
 const db = require('../utils/db');
-const { generateChatSummary, getRecentMessages, saveChatSummary, getExistingSummaries } = require('../utils/ai');
+const { generateChatSummary, getRecentMessages, saveChatSummary, getExistingSummaries, storeChatMessage } = require('../utils/ai');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -37,7 +37,20 @@ module.exports = {
         .setDescription('Days to look back (1-30, default: 7)')
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(30))),
+        .setMaxValue(30)))
+    .addSubcommand(sub =>
+      sub.setName('fetch_history')
+        .setDescription('Manually fetch and store chat history for a channel')
+        .addChannelOption(o =>
+          o.setName('channel')
+            .setDescription('The channel to fetch history from (defaults to current)')
+            .setRequired(false))
+        .addIntegerOption(o =>
+          o.setName('days')
+            .setDescription('Number of days of history to fetch (1-14, default: 1)')
+            .setMinValue(1)
+            .setMaxValue(14)
+            .setRequired(false))),
 
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand();
@@ -51,6 +64,8 @@ module.exports = {
         await this.handleChannelSummary(interaction);
       } else if (subcommand === 'server') {
         await this.handleServerSummary(interaction);
+      } else if (subcommand === 'fetch_history') {
+        await this.handleFetchHistory(interaction);
       }
     } catch (error) {
       logger.error('Error in summarize command:', error);
@@ -232,6 +247,117 @@ module.exports = {
       logger.error('Error generating server summary:', error);
       await interaction.editReply({ 
         content: '❌ Error generating server summary. Please try again later.' 
+      });
+    }
+  },
+
+  async handleFetchHistory(interaction) {
+    const channel = interaction.options.getChannel('channel') || interaction.channel;
+    const days = interaction.options.getInteger('days') || 1;
+    const guildId = interaction.guild.id;
+    
+    // Check permissions
+    if (!channel.permissionsFor(interaction.guild.members.me).has(PermissionsBitField.Flags.ReadMessageHistory)) {
+      await interaction.editReply({ 
+        content: `❌ I don't have permission to read message history in ${channel}.` 
+      });
+      return;
+    }
+
+    try {
+      await interaction.editReply({ 
+        content: `🔄 Fetching message history from ${channel} for the last ${days} day(s)...` 
+      });
+
+      let totalFetched = 0;
+      let totalStored = 0;
+      const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000);
+      
+      // Fetch messages from Discord API
+      let lastMessageId = null;
+      let keepFetching = true;
+      
+      while (keepFetching) {
+        const options = { limit: 100 };
+        if (lastMessageId) {
+          options.before = lastMessageId;
+        }
+        
+        const messages = await channel.messages.fetch(options);
+        
+        if (messages.size === 0) {
+          keepFetching = false;
+          break;
+        }
+        
+        let messagesInTimeRange = 0;
+        
+        for (const [messageId, message] of messages) {
+          totalFetched++;
+          
+          // Check if message is within our time range
+          if (message.createdTimestamp < cutoffTime) {
+            keepFetching = false;
+            break;
+          }
+          
+          messagesInTimeRange++;
+          
+          // Store non-bot messages
+          if (!message.author.bot && message.guild) {
+            try {
+              storeChatMessage(db, message);
+              totalStored++;
+            } catch (error) {
+              logger.warn(`Failed to store message ${messageId}:`, error);
+            }
+          }
+          
+          lastMessageId = messageId;
+        }
+        
+        // If no messages in this batch were in our time range, stop
+        if (messagesInTimeRange === 0) {
+          keepFetching = false;
+        }
+        
+        // Rate limiting - small delay between API calls
+        if (keepFetching) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      // Get the message count in database (using file-based DB)
+      const allMessages = db.prepare('SELECT COUNT(*) as count FROM chat_messages').get();
+      const finalCount = allMessages ? allMessages.count : totalStored;
+      
+      const embed = new EmbedBuilder()
+        .setTitle('📥 Message History Fetched')
+        .setDescription(`Successfully fetched message history from ${channel}`)
+        .addFields(
+          { name: '📊 Messages Processed', value: totalFetched.toString(), inline: true },
+          { name: '💾 Messages Stored', value: totalStored.toString(), inline: true },
+          { name: '📝 Total in Database', value: finalCount.toString(), inline: true },
+          { name: '⏱️ Time Range', value: `${days} day(s)`, inline: true }
+        )
+        .setColor(0x00ff00)
+        .setTimestamp()
+        .setFooter({ 
+          text: 'You can now use /summarize channel or /summarize server',
+          iconURL: interaction.client.user.displayAvatarURL()
+        });
+
+      await interaction.editReply({ 
+        content: null,
+        embeds: [embed] 
+      });
+      
+      logger.info(`Fetched ${totalFetched} messages, stored ${totalStored} from #${channel.name} (${days} days) by ${interaction.user.tag}`);
+      
+    } catch (error) {
+      logger.error('Error fetching message history:', error);
+      await interaction.editReply({ 
+        content: `❌ Error fetching message history from ${channel}: ${error.message}` 
       });
     }
   }
