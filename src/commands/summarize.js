@@ -309,7 +309,8 @@ module.exports = {
               storeChatMessage(db, message);
               totalStored++;
             } catch (error) {
-              logger.warn(`Failed to store message ${messageId}:`, error);
+              logger.error(`Failed to store message ${messageId}:`, error);
+              console.log(`Failed to store message ${messageId}:`, error);
             }
           }
           

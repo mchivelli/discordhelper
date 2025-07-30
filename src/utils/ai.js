@@ -1,6 +1,7 @@
 require('dotenv').config();
 const API_KEY = process.env.OPENROUTER_API_KEY;
-// Default to free Gemini model if none specified, but use Claude Haiku for summarization
+
+// AI models configuration
 const MODEL = process.env.MODEL_NAME || 'google/gemini-2.5-pro-exp-03-25';
 const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || 'anthropic/claude-3.5-haiku';
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -379,6 +380,161 @@ async function checkAIStatus() {
   }
 }
 
+// Store a Discord message in the database for summarization
+function storeChatMessage(db, message) {
+  try {
+    const messageData = {
+      id: `${message.guild.id}_${message.channel.id}_${message.id}`,
+      message_id: message.id,
+      channel_id: message.channel.id,
+      guild_id: message.guild.id,
+      user_id: message.author.id,
+      username: message.author.tag,
+      content: message.content || '',
+      timestamp: message.createdTimestamp,
+      attachments: message.attachments.size > 0 ? JSON.stringify(Array.from(message.attachments.values()).map(a => ({
+        url: a.url,
+        name: a.name,
+        size: a.size
+      }))) : null
+    };
+
+    // Use INSERT for file-based database
+    const stmt = db.prepare(`
+      INSERT OR REPLACE INTO chat_messages 
+      (id, message_id, channel_id, guild_id, user_id, username, content, timestamp, attachments)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(
+      messageData.id,
+      messageData.message_id,
+      messageData.channel_id,
+      messageData.guild_id,
+      messageData.user_id,
+      messageData.username,
+      messageData.content,
+      messageData.timestamp,
+      messageData.attachments
+    );
+    
+    return true;
+  } catch (error) {
+    console.error('Error storing chat message:', error);
+    throw error;
+  }
+}
+
+// Generate chat summary using AI
+async function generateChatSummary(messages, timeRange, context) {
+  const prompt = `Analyze these Discord chat messages from ${context} over ${timeRange} and create a comprehensive summary.
+
+Messages:
+${messages.map(m => `${m.username}: ${m.content}`).join('\n')}
+
+Create a well-structured summary that includes:
+1. Main topics discussed
+2. Key decisions or outcomes
+3. Notable participants and their contributions
+4. Any action items or next steps
+
+Keep it concise but informative, around 200-300 words.`;
+
+  try {
+    const summary = await callLLMAPI([{ role: 'user', content: prompt }], 500, SUMMARIZATION_MODEL);
+    return summary;
+  } catch (error) {
+    console.error('Error generating chat summary:', error);
+    throw new Error('Failed to generate chat summary');
+  }
+}
+
+// Get recent messages from database
+function getRecentMessages(db, guildId, channelId = null, hours = 24) {
+  try {
+    const cutoffTime = Date.now() - (hours * 60 * 60 * 1000);
+    
+    let query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp > ?';
+    let params = [guildId, cutoffTime];
+    
+    if (channelId) {
+      query += ' AND channel_id = ?';
+      params.push(channelId);
+    }
+    
+    query += ' ORDER BY timestamp ASC';
+    
+    const stmt = db.prepare(query);
+    return stmt.all(...params);
+  } catch (error) {
+    console.error('Error getting recent messages:', error);
+    return [];
+  }
+}
+
+// Save chat summary to database
+function saveChatSummary(db, guildId, channelId, summary, messageCount, date) {
+  try {
+    const summaryData = {
+      id: `${guildId}_${channelId || 'server'}_${date}`,
+      guild_id: guildId,
+      channel_id: channelId,
+      date: date,
+      summary: summary,
+      message_count: messageCount,
+      created_at: Date.now(),
+      ai_model: SUMMARIZATION_MODEL
+    };
+
+    const stmt = db.prepare(`
+      INSERT OR REPLACE INTO chat_summaries 
+      (id, guild_id, channel_id, date, summary, message_count, created_at, ai_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    stmt.run(
+      summaryData.id,
+      summaryData.guild_id,
+      summaryData.channel_id,
+      summaryData.date,
+      summaryData.summary,
+      summaryData.message_count,
+      summaryData.created_at,
+      summaryData.ai_model
+    );
+    
+    return true;
+  } catch (error) {
+    console.error('Error saving chat summary:', error);
+    throw error;
+  }
+}
+
+// Get existing summaries from database
+function getExistingSummaries(db, guildId, channelId = null, days = 7) {
+  try {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+    
+    let query = 'SELECT * FROM chat_summaries WHERE guild_id = ? AND date >= ?';
+    let params = [guildId, cutoffDateStr];
+    
+    if (channelId) {
+      query += ' AND channel_id = ?';
+      params.push(channelId);
+    }
+    
+    query += ' ORDER BY date DESC';
+    
+    const stmt = db.prepare(query);
+    return stmt.all(...params);
+  } catch (error) {
+    console.error('Error getting existing summaries:', error);
+    return [];
+  }
+}
+
 module.exports = { 
   getPrereqs, 
   enhanceAnnouncement, 
@@ -387,5 +543,10 @@ module.exports = {
   generateFollowUpTasks,
   enhanceTaskNote,
   enhanceTaskDescription,
-  checkAIStatus 
+  checkAIStatus,
+  storeChatMessage,
+  generateChatSummary,
+  getRecentMessages,
+  saveChatSummary,
+  getExistingSummaries
 };
