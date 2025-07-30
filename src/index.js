@@ -113,9 +113,11 @@ console.log('🔄 DEBUG: Production features setup complete');
 
 console.log('🔄 DEBUG: Setting up Discord event handlers...');
 client.on(Events.ClientReady, () => {
+  console.log('🔄 DEBUG: ClientReady event fired!');
   logger.info(`✅ SUCCESS: Logged in as ${client.user.tag}`);
   
   // Load changelog channel settings from database or environment variables
+  console.log('🔄 DEBUG: Loading changelog channel settings...');
   try {
     // First check database settings
     const settingsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='bot_settings'").get();
@@ -286,6 +288,7 @@ if (process.env.NODE_ENV === 'production') {
   logger.info('Skipping health check server (not in production mode)');
 }
 
+console.log('🔄 DEBUG: Setting up InteractionCreate handler...');
 client.on(Events.InteractionCreate, async interaction => {
   try {
     // Only apply rate limiting to interactions that can be replied to
@@ -1667,6 +1670,7 @@ Add stages manually with \`/task add-stage\`.`,
   }
 });
 
+console.log('🔄 DEBUG: Setting up MessageCreate handler...');
 // Add message listener for chat summarization
 client.on(Events.MessageCreate, async message => {
   try {
@@ -1679,6 +1683,7 @@ client.on(Events.MessageCreate, async message => {
   }
 });
 
+console.log('🔄 DEBUG: All event handlers setup complete!');
 // Start Discord bot
 logger.info('🔄 Starting Discord bot login...');
 client.login(process.env.DISCORD_TOKEN).catch(error => {
