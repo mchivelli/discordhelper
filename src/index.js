@@ -17,10 +17,16 @@ const rateLimits = new Map();
 const COOLDOWN_DURATION = 3000; // 3 seconds
 
 const db = require('./utils/db');
-const { getPrereqs } = require('./utils/ai');
+const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, saveChatSummary } = require('./utils/ai');
 const { generatePatchAnnouncement, postChangelogEntry } = require('./utils/patch-utils');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ 
+  intents: [
+    GatewayIntentBits.Guilds, 
+    GatewayIntentBits.GuildMessages, 
+    GatewayIntentBits.MessageContent
+  ] 
+});
 client.commands = new Collection();
 
 // Initialize changelog settings object
@@ -129,6 +135,64 @@ client.on(Events.ClientReady, () => {
           .catch(err => logger.error(`Failed to send reminder to guild ${guild.name}:`, err));
       }
     });
+  });
+
+  // Set up daily automatic chat summarization
+  cron.schedule(process.env.SUMMARY_CRON || '0 8 * * *', async () => {
+    logger.info('Starting daily automatic chat summarization...');
+    
+    for (const guild of client.guilds.cache.values()) {
+      try {
+        // Get messages from last 24 hours
+        const messages = getRecentMessages(db, guild.id, null, 24);
+        
+        if (!messages || messages.length < 10) {
+          logger.info(`Skipping summary for ${guild.name}: insufficient messages (${messages?.length || 0})`);
+          continue;
+        }
+
+        // Generate summary
+        logger.info(`Generating automatic summary for ${guild.name} (${messages.length} messages)`);
+        const summary = await generateChatSummary(messages, 'Yesterday', guild.name);
+        
+        // Save to database
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const dateStr = yesterday.toISOString().split('T')[0];
+        saveChatSummary(db, guild.id, null, summary, messages.length, dateStr);
+        
+        // Try to send to system channel or first available text channel
+        let targetChannel = guild.systemChannel;
+        if (!targetChannel) {
+          targetChannel = guild.channels.cache.find(c => 
+            c.type === 0 && // Text channel
+            c.permissionsFor(guild.members.me)?.has(['SendMessages', 'EmbedLinks'])
+          );
+        }
+        
+        if (targetChannel) {
+          const embed = new EmbedBuilder()
+            .setTitle('📊 Daily Chat Summary')
+            .setDescription(summary)
+            .setColor(0x3498db)
+            .setTimestamp()
+            .setFooter({ 
+              text: `${messages.length} messages processed • Use /summarize history to view more`,
+              iconURL: client.user.displayAvatarURL()
+            });
+
+          await targetChannel.send({ embeds: [embed] });
+          logger.info(`Sent automatic summary to ${guild.name} #${targetChannel.name}`);
+        } else {
+          logger.warn(`No suitable channel found for automatic summary in ${guild.name}`);
+        }
+        
+      } catch (error) {
+        logger.error(`Error generating automatic summary for guild ${guild.name}:`, error);
+      }
+    }
+    
+    logger.info('Daily automatic chat summarization completed');
   });
   
   logger.info('Bot is ready to handle interactions');
@@ -1144,7 +1208,9 @@ Add stages manually with \`/task add-stage\`.`,
         
         // Also check all stages for debugging
         const allStages = db.prepare('SELECT * FROM stages WHERE task_id=? ORDER BY idx').all(id);
-        console.log(`DEBUG: All stages for task ${id}:`, allStages);
+        console.log(`DEBUG: All stages for task ${id} (should only show ${id} stages):`, allStages);
+        console.log(`DEBUG: Stages count: ${allStages.length}`);
+        console.log(`DEBUG: Stage task_ids:`, allStages.map(s => s.task_id));
         
         if (!next) {
           await interaction.reply({ content: 'All stages done 🎉', ephemeral: true });
@@ -1557,6 +1623,18 @@ Add stages manually with \`/task add-stage\`.`,
     } else {
       await interaction.reply(reply);
     }
+  }
+});
+
+// Add message listener for chat summarization
+client.on(Events.MessageCreate, async message => {
+  try {
+    // Store non-bot messages for summarization
+    if (!message.author.bot && message.guild) {
+      storeChatMessage(db, message);
+    }
+  } catch (error) {
+    logger.error('Error processing message for chat summary:', error);
   }
 });
 

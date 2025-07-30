@@ -1,11 +1,12 @@
 require('dotenv').config();
 const API_KEY = process.env.OPENROUTER_API_KEY;
-// Default to free Gemini model if none specified
+// Default to free Gemini model if none specified, but use Claude Haiku for summarization
 const MODEL = process.env.MODEL_NAME || 'google/gemini-2.5-pro-exp-03-25';
+const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || 'anthropic/claude-3.5-haiku';
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Helper function to make API requests to the LLM
-async function callLLMAPI(messages, maxTokens = 200) {
+async function callLLMAPI(messages, maxTokens = 200, modelOverride = null) {
   // Discord-optimized fallback responses if API call fails or is not configured
   const fallbackResponses = {
     'getPrereqs': 'Make sure all previous stages are complete. Gather necessary resources and coordinate with team members.',
@@ -45,7 +46,7 @@ async function callLLMAPI(messages, maxTokens = 200) {
         'X-Title': 'Discord Task Management Bot'
       },
       body: JSON.stringify({
-        model: MODEL || 'google/gemini-2.5-pro-exp-03-25', // Default to free Gemini model
+        model: modelOverride || MODEL || 'google/gemini-2.5-pro-exp-03-25', // Use override model if provided
         messages: messages,
         max_tokens: maxTokens
       })

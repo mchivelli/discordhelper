@@ -70,6 +70,29 @@ CREATE TABLE IF NOT EXISTS changelogs (
   posted INTEGER DEFAULT 0,
   posted_channel_id TEXT
 );
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  guild_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  username TEXT NOT NULL,
+  content TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  attachments TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chat_summaries (
+  id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT,
+  date TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  message_count INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  ai_model TEXT DEFAULT 'claude-3.5-haiku'
+);
 `);
 // Export our file-based database implementation
 module.exports = db;

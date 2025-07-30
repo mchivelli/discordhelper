@@ -22,6 +22,14 @@ A comprehensive Discord bot for task management, change tracking, and announceme
 - Preview announcements before posting
 - Professional formatting with reduced emoji usage
 
+### Chat Summarization (NEW! 🆕)
+- AI-powered chat summaries for channels and entire servers
+- Manual summarization with `/summarize` command
+- Automatic daily summaries posted to system channel
+- Flexible time ranges (1 hour to 1 week)
+- Historical summary viewing and management
+- Cost-effective with Claude 3.5 Haiku AI model
+
 ### System Features
 - Persistent SQLite database storage with automated backups
 - Comprehensive error handling and logging
@@ -77,12 +85,14 @@ GUILD_ID=your_dev_guild_id  # Optional, for guild-specific commands
 # OpenRouter
 OPENROUTER_API_KEY=sk-or-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 MODEL_NAME=gemini-2.0-flash-exp:free  # Or any other supported model
+SUMMARIZATION_MODEL=anthropic/claude-3.5-haiku  # Recommended for chat summaries
 
 # Persistence
 DB_PATH=./data/tasks.db
 
-# Reminders
+# Reminders & Summaries
 REMINDER_CRON=0 9 * * *  # Daily at 9am
+SUMMARY_CRON=0 8 * * *   # Daily chat summaries at 8am
 ```
 
 ## Usage
@@ -133,12 +143,23 @@ This bot uses OpenRouter API for AI-enhanced features. To ensure proper AI funct
 
 1. Get an API key from [OpenRouter.ai](https://openrouter.ai/)
 2. Add the API key to your `.env` file as `OPENROUTER_API_KEY`
-3. Choose a model (default is `openai/gpt-3.5-turbo`)
+3. Choose models:
+   - `MODEL_NAME` - General AI tasks (default: free Gemini model)
+   - `SUMMARIZATION_MODEL` - Chat summaries (recommended: `anthropic/claude-3.5-haiku`)
 
 At startup, the bot will automatically:
 - Test the AI connection
 - Fall back to basic functionality if AI is unavailable
 - Report the AI status in the logs
+
+#### AI Model Costs
+
+**Chat Summarization** (Claude 3.5 Haiku):
+- Small server (100 msgs/day): ~$0.01-0.02/day
+- Medium server (500 msgs/day): ~$0.05-0.10/day  
+- Large server (2000 msgs/day): ~$0.20-0.40/day
+
+**Free Alternative**: Use `google/gemini-2.0-flash-experimental` for testing
 
 You can manually check AI status with:
 ```bash
@@ -171,6 +192,11 @@ node -e "require('./src/utils/ai').checkAIStatus().then(console.log)"
 - `/announce post <id>` - Post a previously created announcement
 - `/announce preview <id>` - Preview a draft announcement
 
+### Chat Summarization (NEW!)
+- `/summarize channel [channel] [hours]` - Summarize messages from a specific channel
+- `/summarize server [hours]` - Generate server-wide activity summary (requires Manage Messages)
+- `/summarize history [days]` - View recent summaries and activity reports
+
 ## Troubleshooting
 
 ### Common Issues
@@ -179,6 +205,10 @@ node -e "require('./src/utils/ai').checkAIStatus().then(console.log)"
 2. **Discord API Errors**: Verify your token and permissions
 3. **Command Not Found**: Make sure you've run the deploy-commands script
 4. **Database Issues**: Check the data directory has correct permissions
+5. **Chat Summarization Not Working**: 
+   - Ensure bot has `MESSAGE_CONTENT` intent enabled
+   - Check bot permissions in target channels
+   - Verify OpenRouter API key is configured
 
 ### Logs
 

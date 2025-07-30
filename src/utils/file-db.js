@@ -21,7 +21,9 @@ const TABLES = {
   task_suggestions: path.join(DB_ROOT, 'task_suggestions'),
   bot_settings: path.join(DB_ROOT, 'bot_settings'),
   announcements: path.join(DB_ROOT, 'announcements'),
-  changelogs: path.join(DB_ROOT, 'changelogs')
+  changelogs: path.join(DB_ROOT, 'changelogs'),
+  chat_messages: path.join(DB_ROOT, 'chat_messages'),
+  chat_summaries: path.join(DB_ROOT, 'chat_summaries')
 };
 
 // Ensure all table directories exist
@@ -34,7 +36,9 @@ const cache = {
   task_suggestions: new Map(),
   bot_settings: new Map(),
   announcements: new Map(),
-  changelogs: new Map()
+  changelogs: new Map(),
+  chat_messages: new Map(),
+  chat_summaries: new Map()
 };
 
 /**
@@ -238,8 +242,12 @@ class QueryBuilder {
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('and idx =')) {
       return items.find(item => item.task_id === params[0] && item.idx === parseInt(params[1])) || null;
     } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('and done = 0')) {
-      return items.find(item => item.task_id === params[0] && item.done === 0) || null;
-    } else if (this.query.toLowerCase().includes('where task_id =') && this.query.toLowerCase().includes('order by idx')) {
+      console.log(`DEBUG: executeSelectQuery - Looking for task_id=${params[0]} with done=0`);
+      console.log(`DEBUG: executeSelectQuery - Available items:`, items.map(item => ({id: item.id, task_id: item.task_id, done: item.done, doneType: typeof item.done})));
+      const result = items.find(item => item.task_id === params[0] && (item.done === 0 || item.done === '0')) || null;
+      console.log(`DEBUG: executeSelectQuery - Found result:`, result);
+      return result;
+    } else if (this.query.toLowerCase().includes('where task_id =') || this.query.toLowerCase().includes('where task_id=')) {
       console.log(`DEBUG: Executing query: ${this.query}`);
       console.log(`DEBUG: Query params:`, params);
       let filtered = items.filter(item => item.task_id === params[0]);
@@ -247,7 +255,7 @@ class QueryBuilder {
       console.log(`DEBUG: All items in stages table:`, items.length);
       
       // Apply done=0 filter if present
-      if (this.query.toLowerCase().includes('and done = 0')) {
+      if (this.query.toLowerCase().includes('and done = 0') || this.query.toLowerCase().includes('and done=0')) {
         console.log(`DEBUG: Before done=0 filter:`, filtered.map(item => ({id: item.id, idx: item.idx, done: item.done, doneType: typeof item.done})));
         filtered = filtered.filter(item => {
           const result = item.done === 0 || item.done === '0';
@@ -257,8 +265,10 @@ class QueryBuilder {
         console.log(`DEBUG: After done=0 filter:`, filtered.length);
       }
       
-      // Sort by idx
-      filtered.sort((a, b) => (a.idx || 0) - (b.idx || 0));
+      // Sort by idx if ORDER BY is present
+      if (this.query.toLowerCase().includes('order by idx')) {
+        filtered.sort((a, b) => (a.idx || 0) - (b.idx || 0));
+      }
       
       const result = filtered[0] || null;
       console.log(`DEBUG: Final result for task ${params[0]}:`, result);
@@ -277,13 +287,19 @@ class QueryBuilder {
    */
   all(...params) {
     const items = loadTable(this.tableName);
+    console.log(`DEBUG: all() - Query: ${this.query}`);
+    console.log(`DEBUG: all() - Params:`, params);
+    console.log(`DEBUG: all() - Total items in ${this.tableName}:`, items.length);
     
     // Handle WHERE clauses in ALL queries
     if (this.query && this.query.toLowerCase().includes('where')) {
       let filtered = items;
       
-      if (this.query.toLowerCase().includes('task_id =')) {
+      if (this.query.toLowerCase().includes('task_id =') || this.query.toLowerCase().includes('task_id=')) {
+        console.log(`DEBUG: all() - Filtering by task_id = ${params[0]}`);
+        console.log(`DEBUG: all() - Before filtering:`, items.map(item => ({id: item.id, task_id: item.task_id})));
         filtered = items.filter(item => item.task_id === params[0]);
+        console.log(`DEBUG: all() - After filtering to ${filtered.length} items:`, filtered.map(item => ({id: item.id, task_id: item.task_id})));
       } else if (this.query.toLowerCase().includes('guild_id =')) {
         filtered = items.filter(item => item.guild_id === params[0]);
       } else if (this.query.toLowerCase().includes('deadline is not null')) {
@@ -419,6 +435,35 @@ class QueryBuilder {
               announcement_id: args[7] || null,
               posted: args[8] || 0,
               posted_channel_id: args[9] || null
+            };
+          }
+          break;
+        case 'chat_messages':
+          if (args.length >= 6) {
+            item = {
+              id: args[0],
+              message_id: args[1],
+              channel_id: args[2],
+              guild_id: args[3],
+              user_id: args[4],
+              username: args[5],
+              content: args[6],
+              timestamp: args[7] || Date.now(),
+              attachments: args[8] || null
+            };
+          }
+          break;
+        case 'chat_summaries':
+          if (args.length >= 6) {
+            item = {
+              id: args[0],
+              guild_id: args[1],
+              channel_id: args[2] || null,
+              date: args[3],
+              summary: args[4],
+              message_count: args[5],
+              created_at: args[6] || Date.now(),
+              ai_model: args[7] || 'claude-3.5-haiku'
             };
           }
           break;
