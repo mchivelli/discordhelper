@@ -21,7 +21,7 @@ const db = require('./utils/db');
 console.log('Database loaded');
 
 console.log('Loading AI utilities...');
-const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, saveChatSummary } = require('./utils/ai');
+const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getPreviousDayMessages, saveChatSummary } = require('./utils/ai');
 console.log('AI utilities loaded');
 
 console.log('Loading patch utilities...');
@@ -146,8 +146,8 @@ client.on(Events.ClientReady, () => {
     
     for (const guild of client.guilds.cache.values()) {
       try {
-        // Get messages from last 24 hours
-        const messages = getRecentMessages(db, guild.id, null, 24);
+        // Get messages from previous day only (not last 24 hours)
+        const messages = getPreviousDayMessages(db, guild.id, null);
         
         if (!messages || messages.length < 10) {
           logger.info(`Skipping summary for ${guild.name}: insufficient messages (${messages?.length || 0})`);
@@ -164,13 +164,35 @@ client.on(Events.ClientReady, () => {
         const dateStr = yesterday.toISOString().split('T')[0];
         saveChatSummary(db, guild.id, null, summary, messages.length, dateStr);
         
-        // Try to send to system channel or first available text channel
-        let targetChannel = guild.systemChannel;
+        // Find target channel - prioritize configured daily summary channel
+        let targetChannel = null;
+        
+        // First, try to find the configured daily summary channel
+        if (process.env.DAILY_SUMMARY_CHANNEL_ID) {
+          targetChannel = guild.channels.cache.get(process.env.DAILY_SUMMARY_CHANNEL_ID);
+          if (targetChannel) {
+            logger.info(`Using configured daily summary channel: #${targetChannel.name}`);
+          } else {
+            logger.warn(`Configured daily summary channel ID ${process.env.DAILY_SUMMARY_CHANNEL_ID} not found in ${guild.name}`);
+          }
+        }
+        
+        // Fallback to system channel or first available text channel
+        if (!targetChannel) {
+          targetChannel = guild.systemChannel;
+          if (targetChannel) {
+            logger.info(`Using system channel: #${targetChannel.name}`);
+          }
+        }
+        
         if (!targetChannel) {
           targetChannel = guild.channels.cache.find(c => 
             c.type === 0 && // Text channel
             c.permissionsFor(guild.members.me)?.has(['SendMessages', 'EmbedLinks'])
           );
+          if (targetChannel) {
+            logger.info(`Using first available text channel: #${targetChannel.name}`);
+          }
         }
         
         if (targetChannel) {

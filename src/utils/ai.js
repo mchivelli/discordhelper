@@ -496,6 +496,41 @@ function getRecentMessages(db, guildId, channelId = null, hours = 24, messageLim
   }
 }
 
+// Get messages from the previous day only (not last 24 hours)
+function getPreviousDayMessages(db, guildId, channelId = null) {
+  try {
+    // Calculate yesterday's date range (00:00:00 to 23:59:59)
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    const startOfYesterday = new Date(yesterday);
+    startOfYesterday.setHours(0, 0, 0, 0);
+    
+    const endOfYesterday = new Date(yesterday);
+    endOfYesterday.setHours(23, 59, 59, 999);
+    
+    const startTimestamp = startOfYesterday.getTime();
+    const endTimestamp = endOfYesterday.getTime();
+    
+    let query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp >= ? AND timestamp <= ?';
+    let params = [guildId, startTimestamp, endTimestamp];
+    
+    if (channelId) {
+      query += ' AND channel_id = ?';
+      params.push(channelId);
+    }
+    
+    query += ' ORDER BY timestamp ASC';
+    
+    const stmt = db.prepare(query);
+    return stmt.all(...params);
+    
+  } catch (error) {
+    console.error('Error getting previous day messages:', error);
+    return [];
+  }
+}
+
 // Save chat summary to database
 function saveChatSummary(db, guildId, channelId, summary, messageCount, date) {
   try {
@@ -571,6 +606,7 @@ module.exports = {
   storeChatMessage,
   generateChatSummary,
   getRecentMessages,
+  getPreviousDayMessages,
   saveChatSummary,
   getExistingSummaries
 };
