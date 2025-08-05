@@ -16,13 +16,13 @@ module.exports = {
         .setRequired(false))
       .addIntegerOption(o => 
         o.setName('hours')
-        .setDescription('Hours to look back (1-168, default: 24)')
+        .setDescription('Hours to look back (1-168, default: 24) - Cannot use with messages')
         .setRequired(false)
         .setMinValue(1)
         .setMaxValue(168))
       .addIntegerOption(o =>
         o.setName('messages')
-        .setDescription('Number of recent messages to summarize (10-1000)')
+        .setDescription('Number of recent messages to summarize (10-1000) - Cannot use with hours')
         .setRequired(false)
         .setMinValue(10)
         .setMaxValue(1000))) // Max 1000 messages
@@ -31,13 +31,13 @@ module.exports = {
       .setDescription('Summarize messages from the entire server')
       .addIntegerOption(o => 
         o.setName('hours')
-        .setDescription('Hours to look back (1-168, default: 24)')
+        .setDescription('Hours to look back (1-168, default: 24) - Cannot use with messages')
         .setRequired(false)
         .setMinValue(1)
         .setMaxValue(168))
       .addIntegerOption(o =>
         o.setName('messages')
-        .setDescription('Number of recent messages to summarize (10-1000)')
+        .setDescription('Number of recent messages to summarize (10-1000) - Cannot use with hours')
         .setRequired(false)
         .setMinValue(10)
         .setMaxValue(1000)))
@@ -156,9 +156,20 @@ module.exports = {
 
   async handleChannelSummary(interaction) {
     const channel = interaction.options.getChannel('channel') || interaction.channel;
-    const hours = interaction.options.getInteger('hours') || 24;
+    const hours = interaction.options.getInteger('hours');
     const messageLimit = interaction.options.getInteger('messages');
     const guildId = interaction.guild.id;
+
+    // Validate that user doesn't provide both hours and messages
+    if (hours && messageLimit) {
+      await interaction.editReply({ 
+        content: '❌ Please specify either `hours` OR `messages`, not both.\n\n**Examples:**\n• `/summarize channel hours:12` - Last 12 hours\n• `/summarize channel messages:50` - Last 50 messages' 
+      });
+      return;
+    }
+
+    // Set default if neither is provided
+    const finalHours = hours || (messageLimit ? null : 24);
     
     // Verify permissions
     if (!channel.permissionsFor(interaction.guild.members.me).has(PermissionsBitField.Flags.ReadMessageHistory)) {
@@ -170,12 +181,12 @@ module.exports = {
 
     try {
       // Get recent messages from database
-      const messages = getRecentMessages(db, guildId, channel.id, hours, messageLimit);
+      const messages = getRecentMessages(db, guildId, channel.id, finalHours, messageLimit);
       
       if (!messages || messages.length === 0) {
         const noMessagesContent = messageLimit 
           ? `📭 No messages found in ${channel}. Make sure I'm tracking messages in this channel.`
-          : `📭 No messages found in ${channel} from the last ${hours} hour(s). Make sure I'm tracking messages in this channel.`;
+          : `📭 No messages found in ${channel} from the last ${finalHours} hour(s). Make sure I'm tracking messages in this channel.`;
           
         await interaction.editReply({ content: noMessagesContent });
         return;
@@ -183,7 +194,7 @@ module.exports = {
 
       const timeRange = messageLimit 
         ? `Last ${messages.length} Messages`
-        : hours === 24 ? 'Last 24 Hours' : `Last ${hours} Hours`;
+        : finalHours === 24 ? 'Last 24 Hours' : `Last ${finalHours} Hours`;
       
       // Generate summary
       const summary = await generateChatSummary(messages, timeRange, channel.name);
@@ -205,7 +216,7 @@ module.exports = {
 
       await interaction.editReply({ embeds: [embed] });
       
-      logger.info(`Generated channel summary for #${channel.name} (${messages.length} messages, ${hours}h) by ${interaction.user.tag}`);
+      logger.info(`Generated channel summary for #${channel.name} (${messages.length} messages, ${messageLimit ? 'msg-count' : finalHours + 'h'}) by ${interaction.user.tag}`);
     } catch (error) {
       logger.error('Error generating channel summary:', error);
       await interaction.editReply({ 
@@ -215,9 +226,20 @@ module.exports = {
   },
 
   async handleServerSummary(interaction) {
-    const hours = interaction.options.getInteger('hours') || 24;
+    const hours = interaction.options.getInteger('hours');
     const messageLimit = interaction.options.getInteger('messages');
     const guildId = interaction.guild.id;
+
+    // Validate that user doesn't provide both hours and messages
+    if (hours && messageLimit) {
+      await interaction.editReply({ 
+        content: '❌ Please specify either `hours` OR `messages`, not both.\n\n**Examples:**\n• `/summarize server hours:12` - Last 12 hours\n• `/summarize server messages:100` - Last 100 messages' 
+      });
+      return;
+    }
+
+    // Set default if neither is provided
+    const finalHours = hours || (messageLimit ? null : 24);
     
     // Check if user has manage messages permission for server-wide summaries
     if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
@@ -229,12 +251,12 @@ module.exports = {
 
     try {
       // Get recent messages from all channels
-      const messages = getRecentMessages(db, guildId, null, hours, messageLimit);
+      const messages = getRecentMessages(db, guildId, null, finalHours, messageLimit);
       
       if (!messages || messages.length === 0) {
         const noMessagesContent = messageLimit
           ? `📭 No messages found in this server. Make sure I'm tracking messages in your channels.`
-          : `📭 No messages found in this server from the last ${hours} hour(s). Make sure I'm tracking messages in your channels.`;
+          : `📭 No messages found in this server from the last ${finalHours} hour(s). Make sure I'm tracking messages in your channels.`;
           
         await interaction.editReply({ content: noMessagesContent });
         return;
@@ -242,7 +264,7 @@ module.exports = {
 
       const timeRange = messageLimit
         ? `Last ${messages.length} Messages`
-        : hours === 24 ? 'Last 24 Hours' : `Last ${hours} Hours`;
+        : finalHours === 24 ? 'Last 24 Hours' : `Last ${finalHours} Hours`;
       
       // Generate summary
       const summary = await generateChatSummary(messages, timeRange, 'the server');
@@ -264,7 +286,7 @@ module.exports = {
 
       await interaction.editReply({ embeds: [embed] });
       
-      logger.info(`Generated server summary for ${interaction.guild.name} (${messages.length} messages, ${hours}h) by ${interaction.user.tag}`);
+      logger.info(`Generated server summary for ${interaction.guild.name} (${messages.length} messages, ${messageLimit ? 'msg-count' : finalHours + 'h'}) by ${interaction.user.tag}`);
     } catch (error) {
       logger.error('Error generating server summary:', error);
       await interaction.editReply({ 
