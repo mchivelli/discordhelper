@@ -1,5 +1,6 @@
 require('dotenv').config();
 const API_KEY = process.env.OPENROUTER_API_KEY;
+const logger = require('./logger');
 
 // AI models configuration
 const MODEL = process.env.MODEL_NAME || 'google/gemini-2.5-pro-exp-03-25';
@@ -426,17 +427,38 @@ function storeChatMessage(db, message) {
 }
 
 // Generate chat summary using AI
-async function generateChatSummary(messages, timeRange, context) {
-  const prompt = `Analyze these Discord chat messages from ${context} over ${timeRange} and create a comprehensive summary.
+async function generateChatSummary(messages, timeRange, context, previousSummary = null) {
+  let prompt = `Analyze these Discord chat messages from ${context} over ${timeRange} and create a comprehensive summary.`;
+  
+  if (previousSummary) {
+    prompt += `
 
-Messages:
+Previous Day's Summary (for context):
+${previousSummary}
+
+Based on the previous day's summary above, pay attention to:
+- Continuation of topics or decisions from the previous day
+- Follow-ups on action items mentioned previously
+- Evolution of ongoing discussions`;
+  }
+
+  prompt += `
+
+Current Messages:
 ${messages.map(m => `${m.username}: ${m.content}`).join('\n')}
 
 Create a well-structured summary that includes:
 1. Main topics discussed
 2. Key decisions or outcomes
 3. Notable participants and their contributions
-4. Any action items or next steps
+4. Any action items or next steps`;
+
+  if (previousSummary) {
+    prompt += `
+5. How today's discussions relate to or build upon yesterday's activities`;
+  }
+
+  prompt += `
 
 Keep it concise but informative, around 200-300 words.`;
 
@@ -531,6 +553,86 @@ function getPreviousDayMessages(db, guildId, channelId = null) {
   }
 }
 
+// Get messages from specified source channels for the last X hours
+async function getMessagesFromSourceChannels(db, guild, hours = 24) {
+  try {
+    const sourceChannelIds = process.env.DAILY_SUMMARY_SOURCE_CHANNELS 
+      ? process.env.DAILY_SUMMARY_SOURCE_CHANNELS.split(',').map(id => id.trim())
+      : null;
+
+    // If no specific channels configured, get from all channels (current behavior)
+    if (!sourceChannelIds || sourceChannelIds.length === 0) {
+      logger.info(`No specific source channels configured for ${guild.name}, using all channels`);
+      return getRecentMessages(db, guild.id, null, hours);
+    }
+
+    // Validate that the configured channels exist in the guild
+    const validChannelIds = [];
+    for (const channelId of sourceChannelIds) {
+      const channel = guild.channels.cache.get(channelId);
+      if (channel) {
+        validChannelIds.push(channelId);
+        logger.info(`Including messages from #${channel.name} for daily summary`);
+      } else {
+        logger.warn(`Configured source channel ${channelId} not found in ${guild.name}`);
+      }
+    }
+
+    if (validChannelIds.length === 0) {
+      logger.warn(`No valid source channels found for ${guild.name}, falling back to all channels`);
+      return getRecentMessages(db, guild.id, null, hours);
+    }
+
+    // Get messages from all valid source channels
+    let allMessages = [];
+    for (const channelId of validChannelIds) {
+      const channelMessages = getRecentMessages(db, guild.id, channelId, hours);
+      if (channelMessages && channelMessages.length > 0) {
+        allMessages = allMessages.concat(channelMessages);
+      }
+    }
+
+    // Sort all messages by timestamp to maintain chronological order
+    allMessages.sort((a, b) => a.timestamp - b.timestamp);
+    
+    logger.info(`Retrieved ${allMessages.length} messages from ${validChannelIds.length} source channels for ${guild.name}`);
+    return allMessages;
+
+  } catch (error) {
+    logger.error('Error getting messages from source channels:', error);
+    // Fallback to all channels
+    return getRecentMessages(db, guild.id, null, hours);
+  }
+}
+
+// Get the previous day's summary for context
+async function getPreviousDaySummary(db, guildId) {
+  try {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    const stmt = db.prepare(`
+      SELECT summary FROM chat_summaries 
+      WHERE guild_id = ? AND channel_id IS NULL AND date = ?
+      ORDER BY created_at DESC LIMIT 1
+    `);
+    
+    const result = stmt.get(guildId, yesterdayStr);
+    
+    if (result) {
+      logger.info(`Found previous day summary for guild ${guildId}`);
+      return result.summary;
+    } else {
+      logger.info(`No previous day summary found for guild ${guildId}`);
+      return null;
+    }
+  } catch (error) {
+    logger.error('Error getting previous day summary:', error);
+    return null;
+  }
+}
+
 // Save chat summary to database
 function saveChatSummary(db, guildId, channelId, summary, messageCount, date) {
   try {
@@ -607,6 +709,8 @@ module.exports = {
   generateChatSummary,
   getRecentMessages,
   getPreviousDayMessages,
+  getMessagesFromSourceChannels,
+  getPreviousDaySummary,
   saveChatSummary,
   getExistingSummaries
 };

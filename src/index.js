@@ -21,7 +21,7 @@ const db = require('./utils/db');
 console.log('Database loaded');
 
 console.log('Loading AI utilities...');
-const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getPreviousDayMessages, saveChatSummary } = require('./utils/ai');
+const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getPreviousDayMessages, getMessagesFromSourceChannels, getPreviousDaySummary, saveChatSummary } = require('./utils/ai');
 console.log('AI utilities loaded');
 
 console.log('Loading patch utilities...');
@@ -146,23 +146,24 @@ client.on(Events.ClientReady, () => {
     
     for (const guild of client.guilds.cache.values()) {
       try {
-        // Get messages from previous day only (not last 24 hours)
-        const messages = getPreviousDayMessages(db, guild.id, null);
+        // Get messages from last 24 hours from specified channels
+        const messages = await getMessagesFromSourceChannels(db, guild, 24);
         
         if (!messages || messages.length < 10) {
           logger.info(`Skipping summary for ${guild.name}: insufficient messages (${messages?.length || 0})`);
           continue;
         }
 
-        // Generate summary
-        logger.info(`Generating automatic summary for ${guild.name} (${messages.length} messages)`);
-        const summary = await generateChatSummary(messages, 'Yesterday', guild.name);
+        // Get previous day's summary for context
+        const previousSummary = await getPreviousDaySummary(db, guild.id);
         
-        // Save to database
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const dateStr = yesterday.toISOString().split('T')[0];
-        saveChatSummary(db, guild.id, null, summary, messages.length, dateStr);
+        // Generate summary with previous day context
+        logger.info(`Generating automatic summary for ${guild.name} (${messages.length} messages)`);
+        const summary = await generateChatSummary(messages, 'Last 24 Hours', guild.name, previousSummary);
+        
+        // Save to database with today's date (since this is a summary of last 24 hours)
+        const today = new Date().toISOString().split('T')[0];
+        saveChatSummary(db, guild.id, null, summary, messages.length, today);
         
         // Find target channel - prioritize configured daily summary channel
         let targetChannel = null;
