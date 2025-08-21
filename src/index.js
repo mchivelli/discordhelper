@@ -131,11 +131,43 @@ client.on(Events.ClientReady, () => {
   // Set up daily reminders
   cron.schedule(process.env.REMINDER_CRON || '0 9 * * *', () => {
     client.guilds.cache.forEach(guild => {
-      const ch = guild.systemChannel;
-      if (ch) {
-        ch.send('Daily reminder: check your pending stages with `/task list`.')
+      let targetChannel = null;
+
+      // Prefer configured reminder channel if provided
+      if (process.env.REMINDER_CHANNEL_ID) {
+        targetChannel = guild.channels.cache.get(process.env.REMINDER_CHANNEL_ID);
+        if (targetChannel) {
+          logger.info(`Using configured reminder channel: #${targetChannel.name}`);
+        } else {
+          logger.warn(`Configured reminder channel ID ${process.env.REMINDER_CHANNEL_ID} not found in ${guild.name}`);
+        }
+      }
+
+      // Fallback to system channel
+      if (!targetChannel) {
+        targetChannel = guild.systemChannel;
+        if (targetChannel) {
+          logger.info(`Using system channel for reminders: #${targetChannel.name}`);
+        }
+      }
+
+      // Final fallback: first available text channel with send perms
+      if (!targetChannel) {
+        targetChannel = guild.channels.cache.find(c => 
+          c.type === 0 && // Text channel
+          c.permissionsFor(guild.members.me)?.has(['SendMessages'])
+        );
+        if (targetChannel) {
+          logger.info(`Using first available text channel for reminders: #${targetChannel.name}`);
+        }
+      }
+
+      if (targetChannel) {
+        targetChannel.send('Daily reminder: check your pending stages with `/task list`.')
           .then(() => logger.info(`Sent reminder to guild ${guild.name}`))
           .catch(err => logger.error(`Failed to send reminder to guild ${guild.name}:`, err));
+      } else {
+        logger.warn(`No suitable channel found for daily reminders in ${guild.name}`);
       }
     });
   });
@@ -147,7 +179,24 @@ client.on(Events.ClientReady, () => {
     for (const guild of client.guilds.cache.values()) {
       try {
         // Get messages from previous day only (not last 24 hours)
-        const messages = getPreviousDayMessages(db, guild.id, null);
+        let messages = [];
+        const sourceChannelsEnv = process.env.DAILY_SUMMARY_SOURCE_CHANNELS;
+        if (sourceChannelsEnv) {
+          const sourceChannels = sourceChannelsEnv.split(',').map(s => s.trim()).filter(Boolean);
+          if (sourceChannels.length > 0) {
+            for (const channelId of sourceChannels) {
+              const chMsgs = getPreviousDayMessages(db, guild.id, channelId);
+              if (chMsgs?.length) messages.push(...chMsgs);
+            }
+            // Ensure chronological order
+            messages.sort((a, b) => a.timestamp - b.timestamp);
+            logger.info(`Using configured source channels for summarization: ${sourceChannels.length} channel(s)`);
+          } else {
+            messages = getPreviousDayMessages(db, guild.id, null);
+          }
+        } else {
+          messages = getPreviousDayMessages(db, guild.id, null);
+        }
         
         if (!messages || messages.length < 10) {
           logger.info(`Skipping summary for ${guild.name}: insufficient messages (${messages?.length || 0})`);
