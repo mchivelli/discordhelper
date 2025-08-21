@@ -4,44 +4,81 @@
 This document explains the updated Daily Summarization features for your Discord bot. The changes address your requirements to:
 
 1. **Post Daily Summarizations in a different channel**
-2. **Limit summarizations to previous day's messages only (not last 24 hours)**
+2. **Only encompass messages from the last 24 hours**
+3. **Keep previous day's summary in mind when generating new summaries**
+4. **Define multiple chat channels for information gathering**
 
 ## 🆕 What's Changed
 
 ### 1. Channel Configuration
-- **New Environment Variable**: `DAILY_SUMMARY_CHANNEL_ID`
-- The bot now supports configuring a specific channel for daily summaries
+- **Output Channel**: `DAILY_SUMMARY_CHANNEL_ID` - Where summaries are posted
+- **Source Channels**: `DAILY_SUMMARY_SOURCE_CHANNELS` - Which channels to gather messages from
+- The bot now supports configuring both output and source channels
 - Maintains backward compatibility with existing fallback logic
 
-### 2. Improved Date Filtering  
-- **Previous Issue**: Bot used "last 24 hours" which could include today's messages
-- **Fixed**: Now uses **previous day only** (yesterday 00:00:00 to 23:59:59)
-- Ensures summaries are truly for the previous day, not a rolling 24-hour window
+### 2. Enhanced Time Filtering  
+- **Previous**: Used "previous day only" (yesterday 00:00:00 to 23:59:59)
+- **Updated**: Now uses **actual last 24 hours** from when the cron job runs
+- This ensures summaries capture the most recent activity, regardless of when the job runs
+
+### 3. Previous Day Context
+- Bot now retrieves and considers the previous day's summary when generating new ones
+- Helps maintain continuity in discussions and track ongoing topics
+- Shows relationships between consecutive days' activities
+
+### 4. Multiple Source Channels
+- Configure specific channels to include in daily summaries
+- Supports both staff channels and user chat channels
+- Filters messages only from the channels you want to monitor
 
 ## ⚙️ Configuration
 
 ### Environment Variables
 
-Add this to your `.env` file or environment configuration:
+Add these to your `.env` file or environment configuration:
 
 ```env
-# Daily Summary Channel Configuration (NEW)
-DAILY_SUMMARY_CHANNEL_ID=your_channel_id_here
+# Daily Summary Configuration
+DAILY_SUMMARY_CHANNEL_ID=your_output_channel_id_here          # Where to post summaries
+DAILY_SUMMARY_SOURCE_CHANNELS=ch1_id,ch2_id,ch3_id           # Which channels to monitor (comma-separated)
 
 # Existing configuration (optional)
-SUMMARY_CRON=0 8 * * *                    # Default: 8 AM daily
-SUMMARIZATION_MODEL=anthropic/claude-3.5-haiku
+SUMMARY_CRON=0 8 * * *                                       # Default: 8 AM daily
+SUMMARIZATION_MODEL=anthropic/claude-3.5-haiku               # AI model for summaries
 ```
 
-### How to Get Channel ID
+### New Environment Variables Explained
+
+#### `DAILY_SUMMARY_SOURCE_CHANNELS` (New)
+- **Purpose**: Specify which channels to include in daily summaries
+- **Format**: Comma-separated list of channel IDs
+- **Example**: `123456789,987654321,555666777`
+- **Behavior**: If not set, includes messages from ALL channels (current behavior)
+
+### How to Get Channel IDs
 
 1. **Enable Developer Mode in Discord:**
    - User Settings → Advanced → Developer Mode (ON)
 
-2. **Get Channel ID:**
-   - Right-click the channel you want to use for daily summaries
+2. **Get Output Channel ID:**
+   - Right-click the channel where you want daily summaries posted
    - Click "Copy Channel ID"
-   - Paste this ID as the value for `DAILY_SUMMARY_CHANNEL_ID`
+   - Use this as `DAILY_SUMMARY_CHANNEL_ID`
+
+3. **Get Source Channel IDs:**
+   - For each channel you want to monitor (staff channels, user channels, etc.)
+   - Right-click the channel → "Copy Channel ID"
+   - Combine all IDs with commas for `DAILY_SUMMARY_SOURCE_CHANNELS`
+
+### Example Configuration
+
+```env
+# Post summaries to #daily-summaries channel
+DAILY_SUMMARY_CHANNEL_ID=123456789012345678
+
+# Monitor messages from #staff-chat, #general, and #announcements
+DAILY_SUMMARY_SOURCE_CHANNELS=111111111111111111,222222222222222222,333333333333333333
+```
 
 ## 🔄 Channel Selection Logic
 
@@ -59,40 +96,49 @@ The bot now uses this priority order:
    - Finds first text channel with proper permissions
    - Logs: `"Using first available text channel: #channel-name"`
 
-## 📅 Date Filtering Improvements
+## 📅 Enhanced Features Details
 
-### Before (Issues)
+### Time Filtering - Last 24 Hours
 ```javascript
-// Got messages from last 24 hours
-const messages = getRecentMessages(db, guild.id, null, 24);
+// Gets messages from last 24 hours (rolling window)
+const messages = await getMessagesFromSourceChannels(db, guild, 24);
 // If cron runs at 8 AM, this gets messages from yesterday 8 AM to today 8 AM
 ```
 
-### After (Fixed)
+### Source Channel Filtering
 ```javascript
-// Gets messages from previous day only
-const messages = getPreviousDayMessages(db, guild.id, null);
-// Always gets messages from yesterday 00:00:00 to yesterday 23:59:59
+// Example: Only get messages from specified channels
+const sourceChannels = ['123456789', '987654321', '555666777'];
+// Bot will only analyze messages from these channels
+```
+
+### Previous Day Context
+```javascript
+// Bot retrieves yesterday's summary and includes it in AI context
+const previousSummary = await getPreviousDaySummary(db, guild.id);
+// AI uses this to maintain continuity and track ongoing discussions
 ```
 
 ### Function Details
-- **`getPreviousDayMessages()`**: New function specifically for daily summaries
-- **Precise Time Range**: Yesterday start (00:00:00) to yesterday end (23:59:59)
-- **Timezone Aware**: Uses server's local timezone
-- **Consistent Results**: Same summary content regardless of when cron job runs
+- **`getMessagesFromSourceChannels()`**: Gets messages from specific channels only
+- **`getPreviousDaySummary()`**: Retrieves previous day's summary for context
+- **Enhanced AI Prompt**: Considers previous day's summary when generating new ones
+- **Smart Fallbacks**: Falls back to all channels if source channels not configured
 
 ## 🚀 Deployment Steps
 
 ### 1. Update Environment Variables
 
-Add the new variable to your environment:
+Add the new variables to your environment:
 
 ```bash
 # Option 1: Add to .env file
-echo "DAILY_SUMMARY_CHANNEL_ID=your_channel_id_here" >> .env
+echo "DAILY_SUMMARY_CHANNEL_ID=your_output_channel_id" >> .env
+echo "DAILY_SUMMARY_SOURCE_CHANNELS=ch1_id,ch2_id,ch3_id" >> .env
 
-# Option 2: Set environment variable directly
-export DAILY_SUMMARY_CHANNEL_ID=your_channel_id_here
+# Option 2: Set environment variables directly
+export DAILY_SUMMARY_CHANNEL_ID=your_output_channel_id
+export DAILY_SUMMARY_SOURCE_CHANNELS=ch1_id,ch2_id,ch3_id
 ```
 
 ### 2. Restart the Bot
@@ -114,10 +160,21 @@ Check the logs when the cron job runs (default: 8 AM daily):
 
 ```bash
 # Look for these log messages:
-# ✅ "Using configured daily summary channel: #your-channel"
-# ✅ "Sent automatic summary to guild-name #your-channel"
 
-# Or these fallback messages:
+# Source channel configuration:
+# ✅ "Including messages from #staff-chat for daily summary"
+# ✅ "Including messages from #general for daily summary"
+# ⚠️  "No specific source channels configured, using all channels"
+
+# Previous day context:
+# ✅ "Found previous day summary for guild 123456789"
+# ℹ️  "No previous day summary found for guild 123456789"
+
+# Output channel selection:
+# ✅ "Using configured daily summary channel: #daily-summaries"
+# ✅ "Sent automatic summary to guild-name #daily-summaries"
+
+# Fallback messages:
 # ⚠️  "Using system channel: #general" 
 # ⚠️  "Using first available text channel: #random"
 ```
@@ -171,13 +228,28 @@ SUMMARY_CRON="30 14 * * *"  # 2:30 PM daily
 When working correctly, you'll see:
 
 ```
-Daily Chat Summary
-📊 Yesterday's Activity
+📊 Daily Chat Summary
+📈 Last 24 Hours Activity
 
-[AI-generated summary of yesterday's messages]
+**Building on Previous Day**: Yesterday we discussed the new feature rollout timeline and server optimization priorities.
+
+**Today's Key Discussions**:
+- Continued planning for the authentication system redesign
+- Resolved the database connection issues from yesterday 
+- New proposal for user interface improvements
+- Follow-up on the security audit recommendations
+
+**Notable Participants**: @Alice led the auth system discussion, @Bob provided database solutions, @Charlie proposed UI changes
+
+**Action Items**: 
+- Alice to finish auth system mockups by Friday
+- Bob to implement connection pooling fix
+- Team to review Charlie's UI proposal next week
+
+**Continuity Notes**: The authentication system discussion builds directly on yesterday's security concerns, showing good progress on the planned roadmap.
 
 ---
-142 messages processed • Use /summarize history to view more
+156 messages from 3 channels • Use /summarize history to view more
 ```
 
 ## 🔄 Rolling Back (If Needed)
@@ -198,10 +270,13 @@ If you need to revert to the old behavior:
 
 ## 💡 Summary of Benefits
 
-✅ **Dedicated Channel**: Daily summaries go to your specified channel  
-✅ **Precise Date Range**: Only previous day's messages (not rolling 24 hours)  
-✅ **Better Logging**: Clear logs showing which channel is being used  
-✅ **Backward Compatible**: Existing servers work without configuration  
-✅ **Consistent Results**: Same summary content regardless of execution time  
+✅ **Dedicated Output Channel**: Daily summaries go to your specified channel  
+✅ **Selective Source Channels**: Only monitor the channels you care about (staff + user channels)  
+✅ **Rolling 24-Hour Window**: Captures the most recent activity regardless of when cron runs  
+✅ **Previous Day Context**: AI maintains continuity by considering yesterday's summary  
+✅ **Enhanced AI Analysis**: Better summaries that track ongoing discussions and action items  
+✅ **Better Logging**: Clear logs showing source channels, context retrieval, and output channels  
+✅ **Backward Compatible**: Existing servers work without configuration (falls back to all channels)  
+✅ **Flexible Configuration**: Mix staff channels and user channels as needed  
 
-Your daily summaries are now more predictable and can be directed to the appropriate channel!
+Your daily summaries are now more intelligent, contextual, and targeted to your specific needs!

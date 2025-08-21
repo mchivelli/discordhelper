@@ -31,20 +31,34 @@ This feature adds AI-powered chat summarization to your Discord bot, allowing us
 ## 📋 Commands
 
 ### `/summarize channel`
+**Time-based summary:**
 ```
-/summarize channel [channel:#general] [hours:24]
+/summarize channel [channel:#general] hours:24
+```
+**Message-count-based summary:**
+```
+/summarize channel [channel:#general] messages:50
 ```
 - Summarizes messages from a specific channel
 - Defaults to current channel if none specified
-- Hours: 1-168 (default: 24)
+- **Hours**: 1-168 (summarize last N hours)
+- **Messages**: 10-1000 (summarize last N messages)
+- ⚠️ **Cannot use both `hours` and `messages` together**
 
 ### `/summarize server`
+**Time-based summary:**
 ```
-/summarize server [hours:24]  
+/summarize server hours:24
+```
+**Message-count-based summary:**
+```
+/summarize server messages:100
 ```
 - Summarizes messages from entire server
 - Requires "Manage Messages" permission
-- Hours: 1-168 (default: 24)
+- **Hours**: 1-168 (summarize last N hours)
+- **Messages**: 10-1000 (summarize last N messages)
+- ⚠️ **Cannot use both `hours` and `messages` together**
 
 ### `/summarize history`
 ```
@@ -53,6 +67,38 @@ This feature adds AI-powered chat summarization to your Discord bot, allowing us
 - Shows recent summaries
 - Days: 1-30 (default: 7)
 - Displays organized by date
+
+### `/summarize fetch_history`
+```
+/summarize fetch_history [channel:#general] [days:1]
+```
+- Manually fetch and store chat history for a channel
+- Useful for building up message database for better summaries
+- Days: 1-14 (default: 1)
+
+## 💡 Usage Examples
+
+**Quick channel summary (default 24 hours):**
+```
+/summarize channel
+```
+
+**Specific time range:**
+```
+/summarize channel channel:#general hours:12
+/summarize server hours:48
+```
+
+**Specific message count:**
+```
+/summarize channel channel:#staff-chat messages:100
+/summarize server messages:200
+```
+
+**View summary history:**
+```
+/summarize history days:14
+```
 
 ## ⚙️ Configuration
 

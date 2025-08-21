@@ -21,7 +21,7 @@ const db = require('./utils/db');
 console.log('Database loaded');
 
 console.log('Loading AI utilities...');
-const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getPreviousDayMessages, saveChatSummary } = require('./utils/ai');
+const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getPreviousDayMessages, getMessagesFromSourceChannels, getPreviousDaySummary, saveChatSummary } = require('./utils/ai');
 console.log('AI utilities loaded');
 
 console.log('Loading patch utilities...');
@@ -178,7 +178,7 @@ client.on(Events.ClientReady, () => {
     
     for (const guild of client.guilds.cache.values()) {
       try {
-        // Get messages from previous day only (not last 24 hours)
+        // Get messages from previous day only (00:00–23:59) with optional source channel filtering
         let messages = [];
         const sourceChannelsEnv = process.env.DAILY_SUMMARY_SOURCE_CHANNELS;
         if (sourceChannelsEnv) {
@@ -203,11 +203,14 @@ client.on(Events.ClientReady, () => {
           continue;
         }
 
-        // Generate summary
-        logger.info(`Generating automatic summary for ${guild.name} (${messages.length} messages)`);
-        const summary = await generateChatSummary(messages, 'Yesterday', guild.name);
+        // Get previous day's summary for context
+        const previousSummary = await getPreviousDaySummary(db, guild.id);
         
-        // Save to database
+        // Generate summary with previous day context
+        logger.info(`Generating automatic summary for ${guild.name} (${messages.length} messages)`);
+        const summary = await generateChatSummary(messages, 'Yesterday', guild.name, previousSummary);
+        
+        // Save to database with yesterday's date
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const dateStr = yesterday.toISOString().split('T')[0];
