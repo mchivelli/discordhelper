@@ -876,9 +876,19 @@ View with \`/task list id:${taskId}\`.`
 
         // Load issue
         let issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
-        if (!issue && sourceMessageId) {
-          const allIssues = db.prepare('SELECT * FROM issues').all();
-          issue = allIssues.find(i => i.message_id === sourceMessageId);
+        if (!issue) {
+          const tryMsgId = sourceMessageId || interaction.message?.id;
+          if (tryMsgId) {
+            const allIssues = db.prepare('SELECT * FROM issues').all();
+            issue = allIssues.find(i => i.message_id === tryMsgId);
+          }
+        }
+        if (!issue && interaction.message?.embeds?.length) {
+          const footerText = interaction.message.embeds[0]?.footer?.text || '';
+          const match = footerText.match(/Issue ID:\s*(\S+)/i);
+          if (match && match[1]) {
+            issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(match[1]);
+          }
         }
         if (!issue) {
           return interaction.reply({ content: 'Issue not found.', ephemeral: true });
@@ -895,19 +905,18 @@ View with \`/task list id:${taskId}\`.`
             .run(newStatus, Date.now(), issueId);
         }
 
-        const updated = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId) || issue;
+        const updated = db.prepare('SELECT * FROM issues WHERE id = ?').get(issue.id) || issue;
         const embed = buildIssueEmbed(updated, null);
 
         // Try to update original message
         try {
-          if (updated.channel_id && updated.message_id) {
+          // Prefer editing the message where the button was clicked
+          if (interaction.message) {
+            await interaction.message.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status)] });
+          } else if (updated.channel_id && updated.message_id) {
             const ch = await interaction.client.channels.fetch(updated.channel_id).catch(() => null);
-            if (ch) {
-              const msg = await ch.messages.fetch(updated.message_id).catch(() => null);
-              if (msg) {
-                await msg.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status)] });
-              }
-            }
+            const msg = ch ? await ch.messages.fetch(updated.message_id).catch(() => null) : null;
+            if (msg) await msg.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status)] });
           }
         } catch (e) {}
 

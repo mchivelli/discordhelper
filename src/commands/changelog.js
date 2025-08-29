@@ -52,32 +52,34 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('changelog')
     .setDescription('Log updates, changes and patches to the changelog channel')
-    .addSubcommand(sub => 
+    .addSubcommand(sub =>
       sub.setName('add')
       .setDescription('Add a new entry to the changelog')
-      .addStringOption(option => 
+      .addStringOption(option =>
         option.setName('version')
         .setDescription('Version number (e.g., 1.0.5)')
-        .setRequired(true))
-      .addStringOption(option => 
+        .setRequired(false))
+      .addStringOption(option =>
         option.setName('category')
         .setDescription('Category of the change')
         .setRequired(true)
         .addChoices(
           ...CHANGELOG_CATEGORIES.map(cat => ({ name: cat.name, value: cat.value }))
         ))
-      .addStringOption(option => 
+      .addStringOption(option =>
         option.setName('changes')
         .setDescription('Description of the changes')
         .setRequired(true))
-      .addBooleanOption(option => 
+      .addBooleanOption(option =>
         option.setName('is_patch')
         .setDescription('Is this a patch that needs announcement?')
         .setRequired(false))
       .addChannelOption(option =>
         option.setName('target')
         .setDescription('Channel or thread to post to (optional preview only)')
-        .setRequired(false)))
+        .setRequired(false)
+        .addChannelTypes(ChannelType.GuildText, ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread, ChannelType.GuildAnnouncement))
+    )
     .addSubcommand(sub => 
       sub.setName('list')
       .setDescription('List recent changelog entries')
@@ -191,7 +193,8 @@ module.exports = {
       
       // Handle add subcommand
       if (subcommand === 'add') {
-        const version = formatVersion(interaction.options.getString('version'));
+        const inputVersion = interaction.options.getString('version');
+        const version = inputVersion ? formatVersion(inputVersion) : 'Unversioned';
         const category = interaction.options.getString('category');
         const changes = interaction.options.getString('changes');
         const isPatch = interaction.options.getBoolean('is_patch') || false;
