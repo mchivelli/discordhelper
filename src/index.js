@@ -381,7 +381,8 @@ client.on(Events.InteractionCreate, async interaction => {
     // Handle issue details modal
     if (customId.startsWith('issue_details_')) {
       try {
-        const issueId = customId.replace('issue_details_', '');
+        const idPart = customId.replace('issue_details_', '');
+        const [issueId, sourceMessageId] = idPart.split('_');
         const steps = interaction.fields.getTextInputValue('steps') || '';
         const expected = interaction.fields.getTextInputValue('expected') || '';
         const actual = interaction.fields.getTextInputValue('actual') || '';
@@ -395,8 +396,12 @@ client.on(Events.InteractionCreate, async interaction => {
         db.prepare('UPDATE issues SET details = ?, updated_at = ? WHERE id = ?')
           .run(JSON.stringify(detailsObj), Date.now(), issueId);
 
-        // Fetch the issue to rebuild embed
-        const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+        // Fetch the issue to rebuild embed; fallback by message id if id lookup fails
+        let issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+        if (!issue && sourceMessageId) {
+          const allIssues = db.prepare('SELECT * FROM issues').all();
+          issue = allIssues.find(i => i.message_id === sourceMessageId);
+        }
         if (!issue) {
           return interaction.reply({ content: 'Issue not found.', ephemeral: true });
         }
@@ -855,17 +860,26 @@ View with \`/task list id:${taskId}\`.`
       handledByFirstHandler = true;
       try {
         const action = customIdParts[1]; // bug | solved | reopen | details
-        const issueId = customIdParts.slice(2).join('_');
+        // customId patterns:
+        // issue_details_<issueId> OR issue_details_<issueId>_<messageId>
+        // issue_bug_<issueId>
+        // Collect identifier carefully to avoid underscores breaking the id
+        const identifier = customIdParts.slice(2).join('_');
+        const [issueId, sourceMessageId] = identifier.split('_');
         const db = require('./utils/db');
         const { buildIssueEmbed, issueActionRow, createIssueDetailsModal } = require('./components/issue-components');
 
         if (action === 'details') {
-          const modal = createIssueDetailsModal(issueId);
+          const modal = createIssueDetailsModal(issueId, interaction.message?.id);
           return interaction.showModal(modal);
         }
 
         // Load issue
-        const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+        let issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+        if (!issue && sourceMessageId) {
+          const allIssues = db.prepare('SELECT * FROM issues').all();
+          issue = allIssues.find(i => i.message_id === sourceMessageId);
+        }
         if (!issue) {
           return interaction.reply({ content: 'Issue not found.', ephemeral: true });
         }

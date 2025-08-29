@@ -277,6 +277,12 @@ class QueryBuilder {
       return result;
     } else if (this.query.toLowerCase().includes('where rowid =')) {
       return items.find(item => item.id === params[0]) || null;
+    } else if (this.tableName === 'issues' && this.query.toLowerCase().includes('select * from issues')) {
+      // For generic SELECT from issues, return the first or let caller .all()
+      if (this.query.toLowerCase().includes('where')) {
+        // minimal where support can be added later as needed
+      }
+      return items[0] || null;
     }
     
     return null;

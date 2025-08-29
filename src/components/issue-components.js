@@ -49,9 +49,9 @@ function issueActionRow(issueId, status) {
   );
 }
 
-function createIssueDetailsModal(issueId) {
+function createIssueDetailsModal(issueId, messageId) {
   const modal = new ModalBuilder()
-    .setCustomId(`issue_details_${issueId}`)
+    .setCustomId(`issue_details_${issueId}${messageId ? '_' + messageId : ''}`)
     .setTitle('Provide Issue Details');
 
   const steps = new TextInputBuilder()
