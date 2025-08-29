@@ -208,13 +208,13 @@ client.on(Events.ClientReady, () => {
         
         // Generate summary with previous day context
         logger.info(`Generating automatic summary for ${guild.name} (${messages.length} messages)`);
-        const summary = await generateChatSummary(messages, 'Yesterday', guild.name, previousSummary);
+        const { summary, modelUsed, messagesUsed } = await generateChatSummary(messages, 'Yesterday', guild.name, previousSummary);
         
         // Save to database with yesterday's date
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const dateStr = yesterday.toISOString().split('T')[0];
-        saveChatSummary(db, guild.id, null, summary, messages.length, dateStr);
+        saveChatSummary(db, guild.id, null, summary, messagesUsed || messages.length, dateStr, modelUsed);
         
         // Find target channel - prioritize configured daily summary channel
         let targetChannel = null;
@@ -248,13 +248,17 @@ client.on(Events.ClientReady, () => {
         }
         
         if (targetChannel) {
+          const description = modelUsed === 'offline'
+            ? `⚠️ Notice: AI unavailable; using offline summary fallback.\n\n${summary}`
+            : summary;
+
           const embed = new EmbedBuilder()
             .setTitle('📊 Daily Chat Summary')
-            .setDescription(summary)
+            .setDescription(description)
             .setColor(0x3498db)
             .setTimestamp()
             .setFooter({ 
-              text: `${messages.length} messages processed • Use /summarize history to view more`,
+              text: `${messagesUsed || messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Use /summarize history to view more'}`,
               iconURL: client.user.displayAvatarURL()
             });
 

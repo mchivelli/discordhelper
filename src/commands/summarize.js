@@ -197,20 +197,24 @@ module.exports = {
         : finalHours === 24 ? 'Last 24 Hours' : `Last ${finalHours} Hours`;
       
       // Generate summary
-      const summary = await generateChatSummary(messages, timeRange, channel.name);
+      const { summary, modelUsed, messagesUsed } = await generateChatSummary(messages, timeRange, channel.name);
       
       // Save summary to database
       const today = new Date().toISOString().split('T')[0];
-      saveChatSummary(db, guildId, channel.id, summary, messages.length, today);
+      saveChatSummary(db, guildId, channel.id, summary, messagesUsed || messages.length, today, modelUsed);
       
       // Create embed
+      const description = modelUsed === 'offline'
+        ? `⚠️ Notice: AI unavailable; using offline summary fallback.\n\n${summary}`
+        : summary;
+
       const embed = new EmbedBuilder()
         .setTitle(`💬 ${channel.name} Summary`)
-        .setDescription(summary)
+        .setDescription(description)
         .setColor(0x00ff00)
         .setTimestamp()
         .setFooter({ 
-          text: `${messages.length} messages processed • Powered by AI`,
+          text: `${messagesUsed || messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Powered by AI'}`,
           iconURL: interaction.client.user.displayAvatarURL()
         });
 
@@ -267,20 +271,24 @@ module.exports = {
         : finalHours === 24 ? 'Last 24 Hours' : `Last ${finalHours} Hours`;
       
       // Generate summary
-      const summary = await generateChatSummary(messages, timeRange, 'the server');
+      const { summary, modelUsed, messagesUsed } = await generateChatSummary(messages, timeRange, 'the server');
       
       // Save summary to database (null channel_id for server-wide)
       const today = new Date().toISOString().split('T')[0];
-      saveChatSummary(db, guildId, null, summary, messages.length, today);
+      saveChatSummary(db, guildId, null, summary, messagesUsed || messages.length, today, modelUsed);
       
       // Create embed
+      const description = modelUsed === 'offline'
+        ? `⚠️ Notice: AI unavailable; using offline summary fallback.\n\n${summary}`
+        : summary;
+
       const embed = new EmbedBuilder()
         .setTitle(`🌐 ${interaction.guild.name} Server Summary`)
-        .setDescription(summary)
+        .setDescription(description)
         .setColor(0x9b59b6)
         .setTimestamp()
         .setFooter({ 
-          text: `${messages.length} messages processed • Powered by AI`,
+          text: `${messagesUsed || messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Powered by AI'}`,
           iconURL: interaction.client.user.displayAvatarURL()
         });
 

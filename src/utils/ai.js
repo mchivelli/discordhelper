@@ -5,10 +5,15 @@ const logger = require('./logger');
 // AI models configuration
 const MODEL = process.env.MODEL_NAME || 'google/gemini-2.5-pro-exp-03-25';
 const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || 'anthropic/claude-3.5-haiku';
+const SUMMARY_MAX_MESSAGES = parseInt(process.env.SUMMARY_MAX_MESSAGES || '300', 10);
+const SUMMARY_TOKEN_BUDGET = parseInt(process.env.SUMMARY_TOKEN_BUDGET || '6000', 10); // approximate input budget
+const SUMMARY_CHUNK_SIZE = parseInt(process.env.SUMMARY_CHUNK_SIZE || '250', 10);
+const SUMMARY_MAX_CHUNKS = parseInt(process.env.SUMMARY_MAX_CHUNKS || '8', 10);
+const SUMMARY_PER_MESSAGE_CHAR_LIMIT = parseInt(process.env.SUMMARY_PER_MESSAGE_CHAR_LIMIT || '220', 10);
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Helper function to make API requests to the LLM
-async function callLLMAPI(messages, maxTokens = 200, modelOverride = null) {
+async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throwOnError = false) {
   // Discord-optimized fallback responses if API call fails or is not configured
   const fallbackResponses = {
     'getPrereqs': 'Make sure all previous stages are complete. Gather necessary resources and coordinate with team members.',
@@ -57,6 +62,9 @@ async function callLLMAPI(messages, maxTokens = 200, modelOverride = null) {
     if (!res.ok) {
       const err = await res.text();
       console.error(`OpenRouter error: ${err}`);
+      if (throwOnError) {
+        throw new Error(err || 'LLM API error');
+      }
       // Use fallback response based on function name
       for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
         if (messages[0]?.content?.includes(funcName) || 
@@ -426,48 +434,201 @@ function storeChatMessage(db, message) {
   }
 }
 
-// Generate chat summary using AI
+// Generate a compact, offline summary as a fallback when LLM is unavailable
+function generateOfflineSummary(messages, timeRange, context) {
+  const trimmed = Array.isArray(messages) ? messages.slice(-SUMMARY_MAX_MESSAGES) : [];
+  const totalUsed = trimmed.length;
+
+  const userCounts = new Map();
+  const wordCounts = new Map();
+  const stop = new Set([
+    'the','and','for','you','are','with','that','this','have','from','was','but','not','your','just','they','can','all','like','get','about','what','when','why','who','how','where','then','than','has','had','did','does','don','got','its','it\'s','i\'m','i\'ll','we\'re','we\'ll','he','she','his','her','them','their','ours','mine','yours','its','it','to','of','in','on','at','as','is','be','or','an','a'
+  ]);
+
+  const sampleMessages = [];
+  for (const msg of trimmed) {
+    const username = (msg.username || 'user').toString();
+    userCounts.set(username, (userCounts.get(username) || 0) + 1);
+
+    const content = (msg.content || '').toString();
+    if (content && content.length > 10 && sampleMessages.length < 3) {
+      sampleMessages.push(`${username}: ${content}`);
+    }
+
+    const words = content
+      .toLowerCase()
+      .replace(/[^a-z0-9_\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w && w.length > 2 && !stop.has(w));
+    for (const w of words) {
+      wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
+    }
+  }
+
+  const topParticipants = Array.from(userCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([u, c]) => `${u} (${c})`)
+    .join(', ');
+
+  const topTopics = Array.from(wordCounts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([w]) => w)
+    .join(', ');
+
+  const lines = [];
+  lines.push(`Summary of ${context} • ${timeRange}`);
+  if (topTopics) lines.push(`Top topics: ${topTopics}`);
+  if (topParticipants) lines.push(`Notable participants: ${topParticipants}`);
+  if (sampleMessages.length) {
+    lines.push('Representative messages:');
+    sampleMessages.forEach(s => lines.push(`• ${s}`));
+  }
+  lines.push(`Messages analyzed: ${totalUsed}${messages.length > totalUsed ? ` (of ${messages.length})` : ''}`);
+  return lines.join('\n');
+}
+
+// ===== Token and message compaction utilities =====
+function estimateTokensFromText(text) {
+  if (!text) return 0;
+  return Math.ceil(text.length / 4); // rough heuristic
+}
+
+function sanitizeContent(text) {
+  if (!text) return '';
+  let t = String(text);
+  // Remove newlines, excessive whitespace, user/channel mentions and shrink URLs
+  t = t.replace(/\s+/g, ' ').trim();
+  t = t.replace(/<@!?\d+>/g, '@user');
+  t = t.replace(/<#\d+>/g, '#channel');
+  t = t.replace(/https?:\/\/\S+/g, '🔗');
+  return t;
+}
+
+function preprocessMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  const cleaned = [];
+  let current = null;
+  for (const m of messages) {
+    const content = sanitizeContent(m.content || '');
+    if (!content) continue;
+    if (content.length < 2) continue;
+    const username = (m.username || 'user').toString();
+    // merge consecutive same-user messages to reduce noise
+    if (current && current.username === username && (current.content.length + content.length) < 800) {
+      current.content += ` | ${content}`;
+    } else {
+      if (current) cleaned.push(current);
+      current = { username, content };
+    }
+  }
+  if (current) cleaned.push(current);
+  // per-message char limit
+  return cleaned.map(m => ({
+    username: m.username,
+    content: m.content.length > SUMMARY_PER_MESSAGE_CHAR_LIMIT
+      ? m.content.slice(0, SUMMARY_PER_MESSAGE_CHAR_LIMIT) + '…'
+      : m.content
+  }));
+}
+
+function buildTranscript(lines, maxTokenBudget) {
+  let usedTokens = 0;
+  const out = [];
+  let usedCount = 0;
+  for (const m of lines) {
+    const line = `${m.username}: ${m.content}`;
+    const t = estimateTokensFromText(line) + 1;
+    if (usedTokens + t > maxTokenBudget) break;
+    usedTokens += t;
+    out.push(line);
+    usedCount++;
+  }
+  return { transcript: out.join('\n'), usedCount, fits: usedCount === lines.length };
+}
+
+async function summarizeChunk(transcript, chunkIndex, totalChunks, context) {
+  const chunkPrompt = `You are summarizing Discord messages for ${context}.
+This is chunk ${chunkIndex} of ${totalChunks}. Read the compact transcript and produce 4-6 bullet points capturing:
+- Main topics, key decisions, action items, and notable participants.
+- Be concise and avoid repetition.
+Transcript:\n${transcript}\n\nReturn only bullet points.`;
+  const result = await callLLMAPI([{ role: 'user', content: chunkPrompt }], 280, SUMMARIZATION_MODEL, true);
+  return typeof result === 'string' ? result : '';
+}
+
+// Generate chat summary using AI, with hierarchical fallback and input trimming
 async function generateChatSummary(messages, timeRange, context, previousSummary = null) {
-  let prompt = `Analyze these Discord chat messages from ${context} over ${timeRange} and create a comprehensive summary.`;
-  
-  if (previousSummary) {
-    prompt += `
-
-Previous Day's Summary (for context):
-${previousSummary}
-
-Based on the previous day's summary above, pay attention to:
-- Continuation of topics or decisions from the previous day
-- Follow-ups on action items mentioned previously
-- Evolution of ongoing discussions`;
-  }
-
-  prompt += `
-
-Current Messages:
-${messages.map(m => `${m.username}: ${m.content}`).join('\n')}
-
-Create a well-structured summary that includes:
-1. Main topics discussed
-2. Key decisions or outcomes
-3. Notable participants and their contributions
-4. Any action items or next steps`;
-
-  if (previousSummary) {
-    prompt += `
-5. How today's discussions relate to or build upon yesterday's activities`;
-  }
-
-  prompt += `
-
-Keep it concise but informative, around 200-300 words.`;
-
   try {
-    const summary = await callLLMAPI([{ role: 'user', content: prompt }], 500, SUMMARIZATION_MODEL);
-    return summary;
+    // If no messages, return offline
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      const offline = generateOfflineSummary([], timeRange, context);
+      return { summary: offline, modelUsed: 'offline', messagesUsed: 0 };
+    }
+
+    // If API key absent, offline immediately
+    if (!API_KEY) {
+      const offline = generateOfflineSummary(messages, timeRange, context);
+      return { summary: offline, modelUsed: 'offline', messagesUsed: Math.min(messages.length, SUMMARY_MAX_MESSAGES) };
+    }
+
+    // Preprocess and compact to allow more messages efficiently
+    const preprocessed = preprocessMessages(messages);
+
+    // Primary attempt: single-pass within budget
+    const overheadTokens = 600; // instructions + headers approx
+    const budget = Math.max(1000, SUMMARY_TOKEN_BUDGET - overheadTokens);
+    const { transcript, usedCount, fits } = buildTranscript(preprocessed, budget);
+
+    let basePrompt = `Analyze these Discord messages from ${context} over ${timeRange} and write a comprehensive, concise summary.`;
+    if (previousSummary) {
+      basePrompt += `\n\nPrevious Day's Summary (context):\n${previousSummary}\n\nPay attention to continuations, follow-ups, and evolving topics.`;
+    }
+    const fullPrompt = `${basePrompt}\n\nTranscript:\n${transcript}\n\nInclude: 1) Main topics, 2) Key decisions/outcomes, 3) Notable participants, 4) Action items/next steps. Keep it ~200-300 words.`;
+
+    if (fits) {
+      const result = await callLLMAPI([{ role: 'user', content: fullPrompt }], 500, SUMMARIZATION_MODEL, true);
+      const text = (result && typeof result === 'string') ? result : '';
+      if (!text) throw new Error('Empty AI response');
+      return { summary: text, modelUsed: SUMMARIZATION_MODEL, messagesUsed: usedCount };
+    }
+
+    // Hierarchical approach: chunk -> summarize -> synthesize
+    const maxMessages = SUMMARY_CHUNK_SIZE * SUMMARY_MAX_CHUNKS;
+    const windowed = preprocessed.length > maxMessages
+      ? preprocessed.slice(-maxMessages)
+      : preprocessed;
+    const chunks = [];
+    for (let i = 0; i < windowed.length; i += SUMMARY_CHUNK_SIZE) {
+      chunks.push(windowed.slice(i, i + SUMMARY_CHUNK_SIZE));
+    }
+
+    const chunkBudget = Math.floor(SUMMARY_TOKEN_BUDGET * 0.7);
+    const chunkSummaries = [];
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const lines = chunks[idx];
+      const { transcript: chunkTranscript } = buildTranscript(lines, chunkBudget);
+      try {
+        const s = await summarizeChunk(chunkTranscript, idx + 1, chunks.length, context);
+        chunkSummaries.push(`Chunk ${idx + 1}/${chunks.length}:\n${s}`);
+      } catch (e) {
+        // If a chunk fails, generate a minimal offline bullet list as backup for that chunk
+        const offline = generateOfflineSummary(lines, `Chunk ${idx + 1}`, context);
+        chunkSummaries.push(`Chunk ${idx + 1}/${chunks.length} (offline):\n${offline}`);
+      }
+    }
+
+    const synthesisPrompt = `You are synthesizing a final daily summary from partial chunk summaries for ${context} over ${timeRange}. Eliminate duplicates, unify themes, and produce a cohesive narrative.\n\nChunk summaries:\n${chunkSummaries.join('\n\n')}\n\nNow write a single, well-structured summary (200-300 words) covering: main topics, key decisions, notable participants, and action items.`;
+    const finalResult = await callLLMAPI([{ role: 'user', content: synthesisPrompt }], 520, SUMMARIZATION_MODEL, true);
+    const finalText = (finalResult && typeof finalResult === 'string') ? finalResult : '';
+    if (!finalText) throw new Error('Empty synthesis result');
+    return { summary: finalText, modelUsed: SUMMARIZATION_MODEL, messagesUsed: windowed.length };
   } catch (error) {
     console.error('Error generating chat summary:', error);
-    throw new Error('Failed to generate chat summary');
+    const offline = generateOfflineSummary(messages || [], timeRange, context);
+    const used = Array.isArray(messages) ? Math.min(messages.length, SUMMARY_MAX_MESSAGES) : 0;
+    return { summary: offline, modelUsed: 'offline', messagesUsed: used };
   }
 }
 
@@ -634,7 +795,7 @@ async function getPreviousDaySummary(db, guildId) {
 }
 
 // Save chat summary to database
-function saveChatSummary(db, guildId, channelId, summary, messageCount, date) {
+function saveChatSummary(db, guildId, channelId, summary, messageCount, date, aiModel = SUMMARIZATION_MODEL) {
   try {
     const summaryData = {
       id: `${guildId}_${channelId || 'server'}_${date}`,
@@ -644,7 +805,7 @@ function saveChatSummary(db, guildId, channelId, summary, messageCount, date) {
       summary: summary,
       message_count: messageCount,
       created_at: Date.now(),
-      ai_model: SUMMARIZATION_MODEL
+      ai_model: aiModel
     };
 
     const stmt = db.prepare(`
