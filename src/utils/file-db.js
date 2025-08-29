@@ -23,7 +23,8 @@ const TABLES = {
   announcements: path.join(DB_ROOT, 'announcements'),
   changelogs: path.join(DB_ROOT, 'changelogs'),
   chat_messages: path.join(DB_ROOT, 'chat_messages'),
-  chat_summaries: path.join(DB_ROOT, 'chat_summaries')
+  chat_summaries: path.join(DB_ROOT, 'chat_summaries'),
+  issues: path.join(DB_ROOT, 'issues')
 };
 
 // Ensure all table directories exist
@@ -38,7 +39,8 @@ const cache = {
   announcements: new Map(),
   changelogs: new Map(),
   chat_messages: new Map(),
-  chat_summaries: new Map()
+  chat_summaries: new Map(),
+  issues: new Map()
 };
 
 /**
@@ -293,6 +295,49 @@ class QueryBuilder {
     
     // Handle WHERE clauses in ALL queries
     if (this.query && this.query.toLowerCase().includes('where')) {
+      // Special handling for chat_messages rich filters
+      if (this.tableName === 'chat_messages') {
+        const q = this.query.toLowerCase();
+        let idx = 0;
+        let filtered = items;
+        // guild filter (required in our queries)
+        if (q.includes('guild_id =')) {
+          const guildId = params[idx++];
+          filtered = filtered.filter(item => item.guild_id === guildId);
+        }
+        // timestamp range filters
+        if (q.includes('timestamp > ?')) {
+          const cutoff = params[idx++];
+          filtered = filtered.filter(item => (item.timestamp || 0) > cutoff);
+        }
+        if (q.includes('timestamp >= ?')) {
+          const startTs = params[idx++];
+          filtered = filtered.filter(item => (item.timestamp || 0) >= startTs);
+        }
+        if (q.includes('timestamp <= ?')) {
+          const endTs = params[idx++];
+          filtered = filtered.filter(item => (item.timestamp || 0) <= endTs);
+        }
+        // channel filter (optional)
+        if (q.includes('channel_id =')) {
+          const channelId = params[idx++];
+          filtered = filtered.filter(item => item.channel_id === channelId);
+        }
+        // ordering
+        if (q.includes('order by timestamp desc')) {
+          filtered.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        } else if (q.includes('order by timestamp asc')) {
+          filtered.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        }
+        // limit (if present, it's the last param)
+        if (q.includes('limit ?')) {
+          const limit = params[params.length - 1];
+          filtered = filtered.slice(0, typeof limit === 'number' ? limit : 0);
+        }
+        console.log(`DEBUG: all() - chat_messages filtered count:`, filtered.length);
+        return filtered;
+      }
+
       let filtered = items;
       
       if (this.query.toLowerCase().includes('task_id =') || this.query.toLowerCase().includes('task_id=')) {
@@ -467,6 +512,27 @@ class QueryBuilder {
             };
           }
           break;
+        case 'issues':
+          // Positional: id, title, description, status, severity, reporter_id, assignee_id, guild_id, channel_id, thread_id, message_id, details, created_at, updated_at
+          if (args.length >= 4) {
+            item = {
+              id: args[0],
+              title: args[1],
+              description: args[2] || null,
+              status: args[3] || 'open',
+              severity: args[4] || 'normal',
+              reporter_id: args[5] || null,
+              assignee_id: args[6] || null,
+              guild_id: args[7] || null,
+              channel_id: args[8] || null,
+              thread_id: args[9] || null,
+              message_id: args[10] || null,
+              details: args[11] || null,
+              created_at: args[12] || Date.now(),
+              updated_at: args[13] || Date.now()
+            };
+          }
+          break;
       }
     }
     
@@ -517,6 +583,82 @@ class QueryBuilder {
     let updatedCount = 0;
     
     // Parse UPDATE queries based on common patterns
+    if (this.tableName === 'issues') {
+      const idArgIndex = (this.query.toLowerCase().includes('where id =')) ? -1 : null;
+      // Update thread/message ids
+      if (this.query.toLowerCase().includes('set thread_id') && this.query.toLowerCase().includes('message_id')) {
+        const threadId = args[0];
+        const messageId = args[1];
+        const updatedAt = args[2] || Date.now();
+        const id = args[3];
+        const issue = items.find(i => i.id === id);
+        if (issue) {
+          issue.thread_id = threadId;
+          issue.message_id = messageId;
+          issue.updated_at = updatedAt;
+          saveItem(this.tableName, issue);
+          updatedCount = 1;
+        }
+        return { changes: updatedCount };
+      }
+      // Update status (optionally with updated_at)
+      if (this.query.toLowerCase().includes('set status')) {
+        let status, updatedAt, id;
+        if (this.query.toLowerCase().includes('updated_at')) {
+          status = args[0];
+          updatedAt = args[1] || Date.now();
+          id = args[2];
+        } else {
+          status = args[0];
+          id = args[1];
+          updatedAt = Date.now();
+        }
+        const issue = items.find(i => i.id === id);
+        if (issue) {
+          issue.status = status;
+          issue.updated_at = updatedAt;
+          saveItem(this.tableName, issue);
+          updatedCount = 1;
+        }
+        return { changes: updatedCount };
+      }
+      // Update details
+      if (this.query.toLowerCase().includes('set details')) {
+        let details, updatedAt, id;
+        if (this.query.toLowerCase().includes('updated_at')) {
+          details = args[0];
+          updatedAt = args[1] || Date.now();
+          id = args[2];
+        } else {
+          details = args[0];
+          id = args[1];
+          updatedAt = Date.now();
+        }
+        const issue = items.find(i => i.id === id);
+        if (issue) {
+          issue.details = details;
+          issue.updated_at = updatedAt;
+          saveItem(this.tableName, issue);
+          updatedCount = 1;
+        }
+        return { changes: updatedCount };
+      }
+      // Update assignee
+      if (this.query.toLowerCase().includes('set assignee_id')) {
+        const assigneeId = args[0];
+        const updatedAt = args[1] || Date.now();
+        const id = args[2];
+        const issue = items.find(i => i.id === id);
+        if (issue) {
+          issue.assignee_id = assigneeId;
+          issue.updated_at = updatedAt;
+          saveItem(this.tableName, issue);
+          updatedCount = 1;
+        }
+        return { changes: updatedCount };
+      }
+    }
+
     if (this.query.toLowerCase().includes('set completion_percentage =') && this.query.toLowerCase().includes('where id =')) {
       const percentage = args[0];
       const id = args[1];

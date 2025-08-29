@@ -378,6 +378,49 @@ client.on(Events.InteractionCreate, async interaction => {
     // Handle modal submissions
     if (interaction.isModalSubmit()) {
       const customId = interaction.customId;
+    // Handle issue details modal
+    if (customId.startsWith('issue_details_')) {
+      try {
+        const issueId = customId.replace('issue_details_', '');
+        const steps = interaction.fields.getTextInputValue('steps') || '';
+        const expected = interaction.fields.getTextInputValue('expected') || '';
+        const actual = interaction.fields.getTextInputValue('actual') || '';
+        const extra = interaction.fields.getTextInputValue('extra') || '';
+
+        const detailsObj = { steps, expected, actual, extra };
+        const db = require('./utils/db');
+        const { buildIssueEmbed, issueActionRow } = require('./components/issue-components');
+
+        // Update DB
+        db.prepare('UPDATE issues SET details = ?, updated_at = ? WHERE id = ?')
+          .run(JSON.stringify(detailsObj), Date.now(), issueId);
+
+        // Fetch the issue to rebuild embed
+        const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+        if (!issue) {
+          return interaction.reply({ content: 'Issue not found.', ephemeral: true });
+        }
+
+        const embed = buildIssueEmbed(issue, interaction.user);
+        try {
+          // Update the original issue message if possible
+          if (issue.channel_id && issue.message_id) {
+            const ch = await interaction.client.channels.fetch(issue.channel_id).catch(() => null);
+            if (ch) {
+              const msg = await ch.messages.fetch(issue.message_id).catch(() => null);
+              if (msg) {
+                await msg.edit({ embeds: [embed], components: [issueActionRow(issue.id, issue.status)] });
+              }
+            }
+          }
+        } catch (e) {}
+
+        return interaction.reply({ content: 'Details saved.', ephemeral: true });
+      } catch (error) {
+        return interaction.reply({ content: `Failed to save details: ${error.message}`, ephemeral: true });
+      }
+    }
+    
       
       // Handle task suggestion modifications
       if (customId.startsWith('modify_suggestions_')) {
@@ -807,6 +850,59 @@ View with \`/task list id:${taskId}\`.`
       const customIdParts = interaction.customId.split('_');
       const buttonAction = customIdParts[0];
       let handledByFirstHandler = false;
+    // Handle issue buttons
+    if (['issue'].includes(buttonAction)) {
+      handledByFirstHandler = true;
+      try {
+        const action = customIdParts[1]; // bug | solved | reopen | details
+        const issueId = customIdParts.slice(2).join('_');
+        const db = require('./utils/db');
+        const { buildIssueEmbed, issueActionRow, createIssueDetailsModal } = require('./components/issue-components');
+
+        if (action === 'details') {
+          const modal = createIssueDetailsModal(issueId);
+          return interaction.showModal(modal);
+        }
+
+        // Load issue
+        const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+        if (!issue) {
+          return interaction.reply({ content: 'Issue not found.', ephemeral: true });
+        }
+
+        // Update status
+        let newStatus = issue.status;
+        if (action === 'bug') newStatus = 'bug';
+        if (action === 'solved') newStatus = 'solved';
+        if (action === 'reopen') newStatus = 'open';
+
+        if (newStatus !== issue.status) {
+          db.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?')
+            .run(newStatus, Date.now(), issueId);
+        }
+
+        const updated = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId) || issue;
+        const embed = buildIssueEmbed(updated, null);
+
+        // Try to update original message
+        try {
+          if (updated.channel_id && updated.message_id) {
+            const ch = await interaction.client.channels.fetch(updated.channel_id).catch(() => null);
+            if (ch) {
+              const msg = await ch.messages.fetch(updated.message_id).catch(() => null);
+              if (msg) {
+                await msg.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status)] });
+              }
+            }
+          }
+        } catch (e) {}
+
+        return interaction.reply({ content: `Status updated to ${newStatus}.`, ephemeral: true });
+      } catch (error) {
+        return interaction.reply({ content: `Failed to update issue: ${error.message}`, ephemeral: true });
+      }
+    }
+
       
       // Handle task-related buttons
       if (['accept', 'modify', 'skip', 'advance', 'view', 'create'].includes(buttonAction)) {

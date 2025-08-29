@@ -159,7 +159,18 @@ module.exports = {
           o.setName('members')
           .setDescription('Space-separated list of member IDs or mentions')
           .setRequired(true)
-          .setMaxLength(500)))),
+          .setMaxLength(500)))
+      .addSubcommand(sub =>
+        sub.setName('delmember')
+        .setDescription('Remove a member from a faction (role + nickname)')
+        .addRoleOption(o =>
+          o.setName('role')
+          .setDescription('The faction role to remove from the player')
+          .setRequired(true))
+        .addUserOption(u =>
+          u.setName('player')
+          .setDescription('The player to remove')
+          .setRequired(true)))),
         
   // Handle autocomplete interactions
   async autocomplete(interaction) {
@@ -1050,6 +1061,8 @@ module.exports = {
         await this.handleFactionDelete(interaction);
       } else if (subcommand === 'addmember') {
         await this.handleFactionAddMember(interaction);
+      } else if (subcommand === 'delmember') {
+        await this.handleFactionDelMember(interaction);
       }
     } catch (error) {
       logger.error(`Error handling faction ${subcommand}:`, error);
@@ -1377,6 +1390,80 @@ module.exports = {
     } catch (error) {
       logger.error('Error adding members to faction role:', error);
       await interaction.editReply(`❌ Failed to add members to faction role: ${error.message}`);
+    }
+  },
+
+  /**
+   * Handle faction delmember command
+   * Removes the specified role from the player and cleans the nickname abbreviation
+   * @param {Object} interaction - Discord interaction object
+   */
+  async handleFactionDelMember(interaction) {
+    await interaction.deferReply();
+
+    const role = interaction.options.getRole('role');
+    const user = interaction.options.getUser('player');
+
+    if (!role || !user) {
+      return interaction.editReply('❌ Role or player not provided.');
+    }
+
+    try {
+      const botMember = interaction.guild.members.me;
+      if (!botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        return interaction.editReply('❌ I need **Manage Roles** permission to remove roles.');
+      }
+
+      const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+      if (!member) {
+        return interaction.editReply('❌ Player not found in this server.');
+      }
+
+      let removedRole = false;
+      let nicknameCleaned = false;
+      let nicknameNote = '';
+
+      if (member.roles.cache.has(role.id)) {
+        try {
+          await member.roles.remove(role);
+          removedRole = true;
+        } catch (e) {
+          return interaction.editReply(`❌ Could not remove role from ${member.displayName}: ${e.message}`);
+        }
+      }
+
+      try {
+        if (!botMember.permissions.has(PermissionsBitField.Flags.ManageNicknames)) {
+          nicknameNote = ' (could not update nickname: missing Manage Nicknames)';
+        } else if (member.manageable) {
+          const currentName = member.displayName || member.user.username;
+          const cleaned = currentName.replace(/^\[.*?\]\s*/, '');
+          if (cleaned !== currentName) {
+            await member.setNickname(cleaned || null);
+            nicknameCleaned = true;
+          }
+        } else {
+          nicknameNote = ' (could not update nickname: role hierarchy)';
+        }
+      } catch (e) {
+        nicknameNote = ' (nickname update failed)';
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle('🗑️ Faction Member Removed')
+        .setColor(role.hexColor || 0x808080)
+        .setDescription(`Processed removal for **${member.displayName}** from **${role.name}**`)
+        .addFields(
+          { name: 'Role Removed', value: removedRole ? '✅ Yes' : 'ℹ️ Member did not have this role', inline: true },
+          { name: 'Nickname Prefix', value: nicknameCleaned ? '✅ Removed [ABBR]' : `ℹ️ No change${nicknameNote}`, inline: true }
+        )
+        .setFooter({ text: `Faction ID: ${role.id}` })
+        .setTimestamp();
+
+      return interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+      logger.error('Error removing faction member:', error);
+      return interaction.editReply(`❌ Failed to remove member: ${error.message}`);
     }
   },
 

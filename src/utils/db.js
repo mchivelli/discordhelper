@@ -93,6 +93,23 @@ CREATE TABLE IF NOT EXISTS chat_summaries (
   created_at INTEGER NOT NULL,
   ai_model TEXT DEFAULT 'claude-3.5-haiku'
 );
+
+CREATE TABLE IF NOT EXISTS issues (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL,
+  severity TEXT,
+  reporter_id TEXT,
+  assignee_id TEXT,
+  guild_id TEXT,
+  channel_id TEXT,
+  thread_id TEXT,
+  message_id TEXT,
+  details TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER
+);
 `);
 // Export our file-based database implementation
 module.exports = db;

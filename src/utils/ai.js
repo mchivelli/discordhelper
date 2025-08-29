@@ -479,8 +479,8 @@ function generateOfflineSummary(messages, timeRange, context) {
 
   const lines = [];
   lines.push(`Summary of ${context} • ${timeRange}`);
-  if (topTopics) lines.push(`Top topics: ${topTopics}`);
-  if (topParticipants) lines.push(`Notable participants: ${topParticipants}`);
+  if (topTopics) lines.push(`Key topics: ${topTopics}`);
+  if (topParticipants) lines.push(`Participant highlights: ${topParticipants}`);
   if (sampleMessages.length) {
     lines.push('Representative messages:');
     sampleMessages.forEach(s => lines.push(`• ${s}`));
@@ -550,10 +550,10 @@ function buildTranscript(lines, maxTokenBudget) {
 
 async function summarizeChunk(transcript, chunkIndex, totalChunks, context) {
   const chunkPrompt = `You are summarizing Discord messages for ${context}.
-This is chunk ${chunkIndex} of ${totalChunks}. Read the compact transcript and produce 4-6 bullet points capturing:
-- Main topics, key decisions, action items, and notable participants.
-- Be concise and avoid repetition.
-Transcript:\n${transcript}\n\nReturn only bullet points.`;
+This is chunk ${chunkIndex} of ${totalChunks}. Read the compact transcript and produce 6-10 tagged bullet points using these tags:
+[Topic] main discussion theme; [Decision] concrete outcome; [Action] follow-up with owner; [Participant] notable contribution.
+Attribute names where possible (e.g., Alice: ...). Avoid repetition.
+Transcript:\n${transcript}\n\nReturn only tagged bullets, one per line.`;
   const result = await callLLMAPI([{ role: 'user', content: chunkPrompt }], 280, SUMMARIZATION_MODEL, true);
   return typeof result === 'string' ? result : '';
 }
@@ -585,7 +585,13 @@ async function generateChatSummary(messages, timeRange, context, previousSummary
     if (previousSummary) {
       basePrompt += `\n\nPrevious Day's Summary (context):\n${previousSummary}\n\nPay attention to continuations, follow-ups, and evolving topics.`;
     }
-    const fullPrompt = `${basePrompt}\n\nTranscript:\n${transcript}\n\nInclude: 1) Main topics, 2) Key decisions/outcomes, 3) Notable participants, 4) Action items/next steps. Keep it ~200-300 words.`;
+    const fullPrompt = `${basePrompt}\n\nTranscript:\n${transcript}\n\nFormat the output with clear sections:
+• Overview (2-3 sentences)
+• Key Topics (bullets)
+• Decisions & Outcomes (bullets)
+• Action Items (bullets with owners, e.g., [Owner] task)
+• Participant Highlights (top contributors and roles)
+Keep it ~200-300 words and attribute names when obvious.`;
 
     if (fits) {
       const result = await callLLMAPI([{ role: 'user', content: fullPrompt }], 500, SUMMARIZATION_MODEL, true);
@@ -619,7 +625,14 @@ async function generateChatSummary(messages, timeRange, context, previousSummary
       }
     }
 
-    const synthesisPrompt = `You are synthesizing a final daily summary from partial chunk summaries for ${context} over ${timeRange}. Eliminate duplicates, unify themes, and produce a cohesive narrative.\n\nChunk summaries:\n${chunkSummaries.join('\n\n')}\n\nNow write a single, well-structured summary (200-300 words) covering: main topics, key decisions, notable participants, and action items.`;
+    const synthesisPrompt = `You are synthesizing a final daily summary from partial chunk summaries for ${context} over ${timeRange}. Eliminate duplicates, unify themes, resolve contradictions, and attribute actions/decisions to people when stated.
+\nChunk summaries:\n${chunkSummaries.join('\n\n')}\n\nProduce a single, well-structured summary with sections:
+• Overview (2-3 sentences)
+• Key Topics (bullets)
+• Decisions & Outcomes (bullets)
+• Action Items (bullets with owners, e.g., [Owner] task)
+• Participant Highlights (top contributors)
+Keep it ~200-300 words, concise, and easy to scan.`;
     const finalResult = await callLLMAPI([{ role: 'user', content: synthesisPrompt }], 520, SUMMARIZATION_MODEL, true);
     const finalText = (finalResult && typeof finalResult === 'string') ? finalResult : '';
     if (!finalText) throw new Error('Empty synthesis result');
