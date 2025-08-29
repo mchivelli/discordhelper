@@ -5,8 +5,7 @@ const {
   ButtonBuilder, 
   ButtonStyle,
   PermissionsBitField,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder
+  ChannelType
 } = require('discord.js');
 const db = require('../utils/db');
 const logger = require('../utils/logger');
@@ -74,6 +73,10 @@ module.exports = {
       .addBooleanOption(option => 
         option.setName('is_patch')
         .setDescription('Is this a patch that needs announcement?')
+        .setRequired(false))
+      .addChannelOption(option =>
+        option.setName('target')
+        .setDescription('Channel or thread to post to (optional preview only)')
         .setRequired(false)))
     .addSubcommand(sub => 
       sub.setName('list')
@@ -192,6 +195,7 @@ module.exports = {
         const category = interaction.options.getString('category');
         const changes = interaction.options.getString('changes');
         const isPatch = interaction.options.getBoolean('is_patch') || false;
+        const target = interaction.options.getChannel('target');
         
         // Generate unique ID
         const changelogId = `cl-${Date.now().toString().substr(-6)}`;
@@ -217,7 +221,7 @@ module.exports = {
         const actionRow = new ActionRowBuilder()
           .addComponents(
             new ButtonBuilder()
-              .setCustomId(`post_changelog_${changelogId}`)
+              .setCustomId(`post_changelog_${changelogId}${target ? '_' + target.id : ''}`)
               .setLabel('Post to Changelog Channel')
               .setStyle(ButtonStyle.Primary),
             new ButtonBuilder()

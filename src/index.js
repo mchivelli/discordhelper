@@ -1387,6 +1387,8 @@ Add stages manually with \`/task add-stage\`.`,
       // Handle original button interactions
       const parts = interaction.customId.split('_');
       const oldAction = parts[0];
+      const actionKey = parts.slice(0, 2).join('_');
+      const id = parts.length >= 2 ? parts[1] : null;
       
       if (oldAction === 'advance') {
         let id, stageIdx;
@@ -1683,7 +1685,7 @@ Add stages manually with \`/task add-stage\`.`,
       }
       
       // Handle changelog post button
-      else if (oldAction === 'post_changelog') {
+      else if (actionKey === 'post_changelog') {
         try {
           // Verify user permissions
           if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
@@ -1695,14 +1697,17 @@ Add stages manually with \`/task add-stage\`.`,
           }
           
           // Post the changelog entry
-          await postChangelogEntry(client, id);
+          const changelogId = parts[2];
+          const targetChannelId = parts.length > 3 ? parts[3] : null;
+          await postChangelogEntry(client, changelogId, targetChannelId);
           
           await interaction.reply({ 
             content: 'Changelog entry posted successfully!', 
             ephemeral: true 
           });
         } catch (error) {
-          logger.error(`Error posting changelog ${id}:`, error);
+          const changelogId = parts[2];
+          logger.error(`Error posting changelog ${changelogId}:`, error);
           await interaction.reply({ 
             content: `Failed to post changelog: ${error.message}`, 
             ephemeral: true 
@@ -1712,7 +1717,7 @@ Add stages manually with \`/task add-stage\`.`,
       }
       
       // Handle changelog discard button
-      else if (oldAction === 'discard_changelog') {
+      else if (actionKey === 'discard_changelog') {
         try {
           // Verify user permissions
           if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
@@ -1724,9 +1729,10 @@ Add stages manually with \`/task add-stage\`.`,
           }
           
           // Delete the changelog entry
+          const changelogId = parts[2];
           const result = db.prepare(
             'DELETE FROM changelogs WHERE id = ?'
-          ).run(id);
+          ).run(changelogId);
           
           if (result.changes === 0) {
             await interaction.reply({ 
@@ -1736,13 +1742,14 @@ Add stages manually with \`/task add-stage\`.`,
             return;
           }
           
-          logger.info(`User ${interaction.user.tag} discarded changelog ${id}`);
+          logger.info(`User ${interaction.user.tag} discarded changelog ${changelogId}`);
           await interaction.reply({ 
             content: 'Changelog entry discarded.', 
             ephemeral: true 
           });
         } catch (error) {
-          logger.error(`Error discarding changelog ${id}:`, error);
+          const changelogId = parts[2];
+          logger.error(`Error discarding changelog ${changelogId}:`, error);
           await interaction.reply({ 
             content: `Failed to discard changelog: ${error.message}`, 
             ephemeral: true 
@@ -1752,7 +1759,7 @@ Add stages manually with \`/task add-stage\`.`,
       }
       
       // Handle create patch announcement button
-      else if (oldAction === 'create_patch') {
+      else if (actionKey === 'create_patch') {
         try {
           // Verify user permissions
           if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageMessages)) {
@@ -1764,9 +1771,10 @@ Add stages manually with \`/task add-stage\`.`,
           }
           
           // Get the changelog entry
+          const changelogId = parts[2];
           const changelog = db.prepare(
             'SELECT * FROM changelogs WHERE id = ?'
-          ).get(id);
+          ).get(changelogId);
           
           if (!changelog) {
             await interaction.reply({ 
@@ -1777,7 +1785,7 @@ Add stages manually with \`/task add-stage\`.`,
           }
           
           // Generate patch announcement
-          const announcement = await generatePatchAnnouncement({ id });
+          const announcement = await generatePatchAnnouncement({ id: changelogId });
           
           // Create preview embed
           const previewEmbed = new EmbedBuilder()

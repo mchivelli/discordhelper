@@ -93,7 +93,7 @@ async function generatePatchAnnouncement(changelog) {
  * @param {string} changelogId - ID of the changelog entry to post
  * @returns {Promise<Object>} - Result of the posting operation
  */
-async function postChangelogEntry(client, changelogId) {
+async function postChangelogEntry(client, changelogId, targetChannelId = null) {
   try {
     // Retrieve the changelog entry
     const entry = db.prepare(
@@ -105,7 +105,7 @@ async function postChangelogEntry(client, changelogId) {
     }
     
     // Get the channel ID from client settings or database
-    const changelogChannelId = client.changelogSettings?.channelId || 
+    const changelogChannelId = targetChannelId || client.changelogSettings?.channelId || 
       db.prepare('SELECT value FROM bot_settings WHERE key = ?').get('changelog_channel_id')?.value;
     
     if (!changelogChannelId) {
@@ -116,8 +116,13 @@ async function postChangelogEntry(client, changelogId) {
     let channel;
     try {
       channel = await client.channels.fetch(changelogChannelId);
-      if (!channel || !channel.isTextBased()) {
-        throw new Error(`Changelog channel ${changelogChannelId} is not a valid text channel`);
+      if (!channel) throw new Error(`Channel ${changelogChannelId} not found`);
+      // If the selected target is a thread, we can post directly to it
+      // Otherwise ensure it's a text-based channel
+      if (channel.isThread()) {
+        // ok
+      } else if (!channel.isTextBased()) {
+        throw new Error(`Changelog channel ${changelogChannelId} is not a valid text channel/thread`);
       }
     } catch (channelError) {
       logger.error(`Failed to fetch changelog channel ${changelogChannelId}:`, channelError);
