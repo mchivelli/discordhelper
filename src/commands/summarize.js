@@ -180,7 +180,7 @@ module.exports = {
     }
 
     try {
-      // Get recent messages from database
+      // Get recent messages from database (do not fetch beyond what's stored)
       const messages = getRecentMessages(db, guildId, channel.id, finalHours, messageLimit);
       
       if (!messages || messages.length === 0) {
@@ -204,9 +204,7 @@ module.exports = {
       saveChatSummary(db, guildId, channel.id, summary, messages.length, today, modelUsed);
       
       // Create embed
-      const description = modelUsed === 'offline'
-        ? `⚠️ Notice: AI unavailable; using offline summary fallback.\n\n${summary}`
-        : summary;
+      const description = summary;
 
       const embed = new EmbedBuilder()
         .setTitle(`💬 ${channel.name} Summary`)
@@ -214,7 +212,7 @@ module.exports = {
         .setColor(0x00ff00)
         .setTimestamp()
         .setFooter({ 
-          text: `${messagesUsed || messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Powered by AI'}`,
+          text: `${messagesUsed || messages.length} messages processed`,
           iconURL: interaction.client.user.displayAvatarURL()
         });
 
@@ -254,7 +252,7 @@ module.exports = {
     }
 
     try {
-      // Get recent messages from all channels
+      // Get recent messages from all channels (do not fetch beyond what's stored)
       const messages = getRecentMessages(db, guildId, null, finalHours, messageLimit);
       
       if (!messages || messages.length === 0) {
@@ -278,9 +276,7 @@ module.exports = {
       saveChatSummary(db, guildId, null, summary, messages.length, today, modelUsed);
       
       // Create embed
-      const description = modelUsed === 'offline'
-        ? `⚠️ Notice: AI unavailable; using offline summary fallback.\n\n${summary}`
-        : summary;
+      const description = summary;
 
       const embed = new EmbedBuilder()
         .setTitle(`🌐 ${interaction.guild.name} Server Summary`)
@@ -288,7 +284,7 @@ module.exports = {
         .setColor(0x9b59b6)
         .setTimestamp()
         .setFooter({ 
-          text: `${messagesUsed || messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Powered by AI'}`,
+          text: `${messagesUsed || messages.length} messages processed`,
           iconURL: interaction.client.user.displayAvatarURL()
         });
 

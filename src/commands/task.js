@@ -357,10 +357,10 @@ module.exports = {
               await interaction.editReply('Template not found. Creating task without stages.');
             }
           } 
-          // Use AI to suggest stages if requested
+          // Suggest stages if requested
           else if (useAI) {
             try {
-              // Generate stage suggestions using AI with contents field and optional generation instructions
+              // Generate stage suggestions using contents field and optional generation instructions
               const suggestedStages = await generateTaskStages(name, contents || name, deadline, generateInstructions);
               
               // Store suggestions in database with explicit ID
@@ -371,10 +371,10 @@ module.exports = {
               
               // Create embed to display suggestions
               const suggestionsEmbed = new EmbedBuilder()
-                .setTitle(`AI-Suggested Stages for "${name}"`)
+                .setTitle(`Suggested Stages for "${name}"`)
                 .setDescription(`Here are stage suggestions based on your task description${generateInstructions ? ` with focus on: "${generateInstructions}"` : ''}. You can accept all or selected ones.`)
                 .setColor('#2196F3')
-                .setFooter({ text: 'Powered by AI' });
+                .setFooter({ text: 'Suggestions' });
               
               // Add each stage as a field
               suggestedStages.forEach((stage, idx) => {
@@ -388,15 +388,15 @@ module.exports = {
               const row = stageSuggestionsActionRow(id, suggestionId);
               
               // Send the suggestions
-              embed.addFields({ name: 'AI Suggestions', value: 'Stage suggestions generated. See below.' });
+              embed.addFields({ name: 'Suggestions', value: 'Stage suggestions generated. See below.' });
               
               await interaction.editReply({
                 embeds: [embed, suggestionsEmbed],
                 components: [row]
               });
             } catch (error) {
-              logger.error('Error generating AI suggestions:', error);
-              embed.addFields({ name: 'AI Suggestions', value: 'Failed to generate suggestions. Please add stages manually.' });
+              logger.error('Error generating suggestions:', error);
+              embed.addFields({ name: 'Suggestions', value: 'Failed to generate suggestions. Please add stages manually.' });
               await interaction.editReply({ embeds: [embed] });
             }
           } else {
@@ -554,7 +554,7 @@ module.exports = {
             return interaction.reply('All stages done 🎉');
           }
           
-          // If notes were provided and AI enhancement requested, process notes
+          // If notes were provided and enhancement requested, process notes
           let processedNotes = notes;
           if (notes && enhanceWithAi) {
             try {

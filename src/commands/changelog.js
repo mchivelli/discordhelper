@@ -55,10 +55,7 @@ module.exports = {
     .addSubcommand(sub =>
       sub.setName('add')
       .setDescription('Add a new entry to the changelog')
-      .addStringOption(option =>
-        option.setName('version')
-        .setDescription('Version number (e.g., 1.0.5)')
-        .setRequired(false))
+      // REQUIRED options must come before non-required ones
       .addStringOption(option =>
         option.setName('category')
         .setDescription('Category of the change')
@@ -70,6 +67,11 @@ module.exports = {
         option.setName('changes')
         .setDescription('Description of the changes')
         .setRequired(true))
+      // Optional options below
+      .addStringOption(option =>
+        option.setName('version')
+        .setDescription('Version number (e.g., 1.0.5)')
+        .setRequired(false))
       .addBooleanOption(option =>
         option.setName('is_patch')
         .setDescription('Is this a patch that needs announcement?')

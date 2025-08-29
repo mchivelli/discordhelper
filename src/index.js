@@ -123,6 +123,18 @@ client.on(Events.ClientReady, () => {
     if (process.env.CHANGELOG_CHANNEL_ID) {
       client.changelogSettings.channelId = process.env.CHANGELOG_CHANNEL_ID;
       logger.info(`Loaded changelog channel ID from environment: ${process.env.CHANGELOG_CHANNEL_ID}`);
+    } else {
+      // Fallback: load from bot_settings if present
+      try {
+        const db = require('./utils/db');
+        const row = db.prepare('SELECT value FROM bot_settings WHERE key = ?').get('changelog_channel_id');
+        if (row?.value) {
+          client.changelogSettings.channelId = row.value;
+          logger.info(`Loaded changelog channel ID from DB: ${row.value}`);
+        }
+      } catch (e) {
+        logger.warn('Could not load changelog channel from DB:', e.message);
+      }
     }
   } catch (error) {
     logger.error('Failed to load changelog settings:', error);
@@ -248,9 +260,7 @@ client.on(Events.ClientReady, () => {
         }
         
         if (targetChannel) {
-          const description = modelUsed === 'offline'
-            ? `⚠️ Notice: AI unavailable; using offline summary fallback.\n\n${summary}`
-            : summary;
+          const description = summary;
 
           const embed = new EmbedBuilder()
             .setTitle('📊 Daily Chat Summary')
@@ -258,7 +268,7 @@ client.on(Events.ClientReady, () => {
             .setColor(0x3498db)
             .setTimestamp()
             .setFooter({ 
-              text: `${messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Use /summarize history to view more'}`,
+              text: `${messages.length} messages processed • Use /summarize history to view more`,
               iconURL: client.user.displayAvatarURL()
             });
 
@@ -630,7 +640,7 @@ View with \`/task list id:${taskId}\`.`
                   // Create follow-up suggestions embed
                   const followUpEmbed = new EmbedBuilder()
                     .setTitle('🚀 What\'s Next?')
-                    .setDescription('AI-suggested follow-up tasks and next actions:')
+                    .setDescription('Suggested follow-up tasks and next actions:')
                     .setColor(0x9b59b6);
                   
                   followUpSuggestions.forEach((suggestion, idx) => {
@@ -718,10 +728,10 @@ View with \`/task list id:${taskId}\`.`
               
               // Create embed to display suggestions
               const suggestionsEmbed = new EmbedBuilder()
-                .setTitle(`AI-Suggested Stages for "${taskName}"`)
+                .setTitle(`Suggested Stages for "${taskName}"`)
                 .setDescription('Here are stage suggestions for your follow-up task. You can accept all or modify them.')
                 .setColor('#2196F3')
-                .setFooter({ text: 'Powered by AI' });
+                .setFooter({ text: 'Suggestions' });
               
               // Add each stage as a field
               suggestedStages.forEach((stage, idx) => {
@@ -735,7 +745,7 @@ View with \`/task list id:${taskId}\`.`
               const { stageSuggestionsActionRow } = require('./components/task-components');
               const row = stageSuggestionsActionRow(newTaskId, suggestionId);
               
-              embed.addFields({ name: 'AI Suggestions', value: 'Stage suggestions generated. See below.' });
+              embed.addFields({ name: 'Suggestions', value: 'Stage suggestions generated. See below.' });
               
               await interaction.editReply({
                 embeds: [embed, suggestionsEmbed],
@@ -743,7 +753,7 @@ View with \`/task list id:${taskId}\`.`
               });
             } catch (error) {
               logger.error('Error generating AI suggestions for follow-up task:', error);
-              embed.addFields({ name: 'AI Suggestions', value: 'Failed to generate suggestions. Please add stages manually.' });
+              embed.addFields({ name: 'Suggestions', value: 'Failed to generate suggestions. Please add stages manually.' });
               await interaction.editReply({ embeds: [embed] });
             }
           } else {
@@ -883,12 +893,40 @@ View with \`/task list id:${taskId}\`.`
             issue = allIssues.find(i => i.message_id === tryMsgId);
           }
         }
+        // Deep fallback: reconstruct minimal issue from embed footer if DB is missing
         if (!issue && interaction.message?.embeds?.length) {
           const footerText = interaction.message.embeds[0]?.footer?.text || '';
           const match = footerText.match(/Issue ID:\s*(\S+)/i);
           if (match && match[1]) {
             issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(match[1]);
           }
+        }
+        // If still not found, try to rebuild from the visible message data
+        if (!issue && interaction.message) {
+          const title = interaction.message.embeds?.[0]?.title?.replace(/^.*?\s/, '') || 'Untitled Issue';
+          const description = interaction.message.embeds?.[0]?.description || '';
+          const channelId = interaction.channelId;
+          const rebuilt = {
+            id: issueId,
+            title,
+            description,
+            status: 'open',
+            severity: 'normal',
+            reporter_id: interaction.user.id,
+            assignee_id: null,
+            guild_id: interaction.guildId,
+            channel_id: channelId,
+            thread_id: null,
+            message_id: interaction.message.id,
+            details: null,
+            created_at: Date.now(),
+            updated_at: Date.now()
+          };
+          try {
+            db.prepare('INSERT OR REPLACE INTO issues (id, title, description, status, severity, reporter_id, assignee_id, guild_id, channel_id, thread_id, message_id, details, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+              .run(rebuilt.id, rebuilt.title, rebuilt.description, rebuilt.status, rebuilt.severity, rebuilt.reporter_id, rebuilt.assignee_id, rebuilt.guild_id, rebuilt.channel_id, rebuilt.thread_id, rebuilt.message_id, rebuilt.details, rebuilt.created_at, rebuilt.updated_at);
+            issue = rebuilt;
+          } catch (_) {}
         }
         if (!issue) {
           return interaction.reply({ content: 'Issue not found.', ephemeral: true });
@@ -1013,7 +1051,7 @@ View with \`/task list id:${taskId}\`.`
             
             // Send confirmation message
             return interaction.editReply({ 
-              content: `✅ Successfully added ${suggestedStages.length} AI-suggested stages to task \`${taskId}\`: **${task?.name || 'Unknown task'}**.
+              content: `✅ Successfully added ${suggestedStages.length} suggested stages to task \`${taskId}\`: **${task?.name || 'Unknown task'}**.
 View stages with \`/task list id:${taskId}\`.`,
               components: [] 
             });
@@ -1081,7 +1119,7 @@ View stages with \`/task list id:${taskId}\`.`,
             const task = db.prepare('SELECT name FROM tasks WHERE id = ?').get(taskId);
             
             return interaction.update({ 
-              content: `Skipped AI-suggested stages for task \`${taskId}\`: **${task.name}**.
+              content: `Skipped suggested stages for task \`${taskId}\`: **${task.name}**.
 Add stages manually with \`/task add-stage\`.`,
               embeds: [],
               components: [] 
@@ -1215,7 +1253,7 @@ Add stages manually with \`/task add-stage\`.`,
                      // Create follow-up suggestions embed
                      const followUpEmbed = new EmbedBuilder()
                        .setTitle('🚀 What\'s Next?')
-                       .setDescription('AI-suggested follow-up tasks and next actions:')
+                       .setDescription('Suggested follow-up tasks and next actions:')
                        .setColor(0x9b59b6);
                      
                      followUpSuggestions.forEach((suggestion, idx) => {
