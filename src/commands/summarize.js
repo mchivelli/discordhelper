@@ -199,9 +199,9 @@ module.exports = {
       // Generate summary
       const { summary, modelUsed, messagesUsed } = await generateChatSummary(messages, timeRange, channel.name);
       
-      // Save summary to database
+      // Save summary to database (store total fetched messages for count)
       const today = new Date().toISOString().split('T')[0];
-      saveChatSummary(db, guildId, channel.id, summary, messagesUsed || messages.length, today, modelUsed);
+      saveChatSummary(db, guildId, channel.id, summary, messages.length, today, modelUsed);
       
       // Create embed
       const description = modelUsed === 'offline'
@@ -273,9 +273,9 @@ module.exports = {
       // Generate summary
       const { summary, modelUsed, messagesUsed } = await generateChatSummary(messages, timeRange, 'the server');
       
-      // Save summary to database (null channel_id for server-wide)
+      // Save summary to database (null channel_id for server-wide); store total fetched count
       const today = new Date().toISOString().split('T')[0];
-      saveChatSummary(db, guildId, null, summary, messagesUsed || messages.length, today, modelUsed);
+      saveChatSummary(db, guildId, null, summary, messages.length, today, modelUsed);
       
       // Create embed
       const description = modelUsed === 'offline'

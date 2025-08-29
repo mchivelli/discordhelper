@@ -214,7 +214,7 @@ client.on(Events.ClientReady, () => {
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
         const dateStr = yesterday.toISOString().split('T')[0];
-        saveChatSummary(db, guild.id, null, summary, messagesUsed || messages.length, dateStr, modelUsed);
+        saveChatSummary(db, guild.id, null, summary, messages.length, dateStr, modelUsed);
         
         // Find target channel - prioritize configured daily summary channel
         let targetChannel = null;
@@ -258,7 +258,7 @@ client.on(Events.ClientReady, () => {
             .setColor(0x3498db)
             .setTimestamp()
             .setFooter({ 
-              text: `${messagesUsed || messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Use /summarize history to view more'}`,
+              text: `${messages.length} messages processed • ${modelUsed === 'offline' ? 'Offline summary' : 'Use /summarize history to view more'}`,
               iconURL: client.user.displayAvatarURL()
             });
 
@@ -912,11 +912,11 @@ View with \`/task list id:${taskId}\`.`
         try {
           // Prefer editing the message where the button was clicked
           if (interaction.message) {
-            await interaction.message.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status)] });
+            await interaction.message.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status, interaction.message.id)] });
           } else if (updated.channel_id && updated.message_id) {
             const ch = await interaction.client.channels.fetch(updated.channel_id).catch(() => null);
             const msg = ch ? await ch.messages.fetch(updated.message_id).catch(() => null) : null;
-            if (msg) await msg.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status)] });
+            if (msg) await msg.edit({ embeds: [embed], components: [issueActionRow(updated.id, updated.status, updated.message_id)] });
           }
         } catch (e) {}
 

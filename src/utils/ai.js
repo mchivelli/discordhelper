@@ -4,12 +4,14 @@ const logger = require('./logger');
 
 // AI models configuration
 const MODEL = process.env.MODEL_NAME || 'google/gemini-2.5-pro-exp-03-25';
-const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || 'anthropic/claude-3.5-haiku';
+// Prefer a strong, inexpensive summarization model by default. Can be overridden via env.
+const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || 'google/gemini-1.5-flash';
 const SUMMARY_MAX_MESSAGES = parseInt(process.env.SUMMARY_MAX_MESSAGES || '300', 10);
 const SUMMARY_TOKEN_BUDGET = parseInt(process.env.SUMMARY_TOKEN_BUDGET || '6000', 10); // approximate input budget
 const SUMMARY_CHUNK_SIZE = parseInt(process.env.SUMMARY_CHUNK_SIZE || '250', 10);
 const SUMMARY_MAX_CHUNKS = parseInt(process.env.SUMMARY_MAX_CHUNKS || '8', 10);
-const SUMMARY_PER_MESSAGE_CHAR_LIMIT = parseInt(process.env.SUMMARY_PER_MESSAGE_CHAR_LIMIT || '220', 10);
+// Allow longer per-message content so the model can capture nuance
+const SUMMARY_PER_MESSAGE_CHAR_LIMIT = parseInt(process.env.SUMMARY_PER_MESSAGE_CHAR_LIMIT || '400', 10);
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Helper function to make API requests to the LLM
@@ -498,35 +500,27 @@ function estimateTokensFromText(text) {
 function sanitizeContent(text) {
   if (!text) return '';
   let t = String(text);
-  // Remove newlines, excessive whitespace, user/channel mentions and shrink URLs
+  // Condense whitespace but preserve Discord mentions like <@123> and <#456>
   t = t.replace(/\s+/g, ' ').trim();
-  t = t.replace(/<@!?\d+>/g, '@user');
-  t = t.replace(/<#\d+>/g, '#channel');
-  t = t.replace(/https?:\/\/\S+/g, '🔗');
+  // Optionally shorten very long URLs to reduce token usage
+  t = t.replace(/https?:\/\/\S{60,}/g, '🔗');
   return t;
 }
 
 function preprocessMessages(messages) {
   if (!Array.isArray(messages)) return [];
   const cleaned = [];
-  let current = null;
   for (const m of messages) {
     const content = sanitizeContent(m.content || '');
     if (!content) continue;
-    if (content.length < 2) continue;
     const username = (m.username || 'user').toString();
-    // merge consecutive same-user messages to reduce noise
-    if (current && current.username === username && (current.content.length + content.length) < 800) {
-      current.content += ` | ${content}`;
-    } else {
-      if (current) cleaned.push(current);
-      current = { username, content };
-    }
+    const timestamp = typeof m.timestamp === 'number' ? m.timestamp : Date.now();
+    cleaned.push({ username, content, timestamp });
   }
-  if (current) cleaned.push(current);
   // per-message char limit
   return cleaned.map(m => ({
     username: m.username,
+    timestamp: m.timestamp,
     content: m.content.length > SUMMARY_PER_MESSAGE_CHAR_LIMIT
       ? m.content.slice(0, SUMMARY_PER_MESSAGE_CHAR_LIMIT) + '…'
       : m.content
@@ -538,7 +532,8 @@ function buildTranscript(lines, maxTokenBudget) {
   const out = [];
   let usedCount = 0;
   for (const m of lines) {
-    const line = `${m.username}: ${m.content}`;
+    const time = new Date(m.timestamp).toISOString().substring(11, 16); // HH:MM 24h
+    const line = `[${time}] ${m.username}: ${m.content}`;
     const t = estimateTokensFromText(line) + 1;
     if (usedTokens + t > maxTokenBudget) break;
     usedTokens += t;
@@ -551,8 +546,8 @@ function buildTranscript(lines, maxTokenBudget) {
 async function summarizeChunk(transcript, chunkIndex, totalChunks, context) {
   const chunkPrompt = `You are summarizing Discord messages for ${context}.
 This is chunk ${chunkIndex} of ${totalChunks}. Read the compact transcript and produce 6-10 tagged bullet points using these tags:
-[Topic] main discussion theme; [Decision] concrete outcome; [Action] follow-up with owner; [Participant] notable contribution.
-Attribute names where possible (e.g., Alice: ...). Avoid repetition.
+[Topic] main theme; [Decision] concrete outcome; [Action] follow-up with owner; [Participant] notable contribution.
+Use exact usernames from the transcript when attributing; do not invent names. Be specific and avoid generic phrasing.
 Transcript:\n${transcript}\n\nReturn only tagged bullets, one per line.`;
   const result = await callLLMAPI([{ role: 'user', content: chunkPrompt }], 280, SUMMARIZATION_MODEL, true);
   return typeof result === 'string' ? result : '';
@@ -576,22 +571,63 @@ async function generateChatSummary(messages, timeRange, context, previousSummary
     // Preprocess and compact to allow more messages efficiently
     const preprocessed = preprocessMessages(messages);
 
+    // Compute participant stats and top keywords for richer prompts
+    const userCounts = new Map();
+    const wordCounts = new Map();
+    const stop = new Set([
+      'the','and','for','you','are','with','that','this','have','from','was','but','not','your','just','they','can','all','like','get','about','what','when','why','who','how','where','then','than','has','had','did','does','don','got','its','it\'s','i\'m','i\'ll','we\'re','we\'ll','he','she','his','her','them','their','ours','mine','yours','its','it','to','of','in','on','at','as','is','be','or','an','a'
+    ]);
+    for (const m of messages) {
+      const username = (m.username || 'user').toString();
+      userCounts.set(username, (userCounts.get(username) || 0) + 1);
+      const words = String(m.content || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9_\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w && w.length > 2 && !stop.has(w));
+      for (const w of words) {
+        wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
+      }
+    }
+    const topParticipants = Array.from(userCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([u, c]) => `${u} (${c})`)
+      .join(', ');
+    const topTopics = Array.from(wordCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([w]) => w)
+      .join(', ');
+
     // Primary attempt: single-pass within budget
     const overheadTokens = 600; // instructions + headers approx
     const budget = Math.max(1000, SUMMARY_TOKEN_BUDGET - overheadTokens);
     const { transcript, usedCount, fits } = buildTranscript(preprocessed, budget);
 
-    let basePrompt = `Analyze these Discord messages from ${context} over ${timeRange} and write a comprehensive, concise summary.`;
+    let basePrompt = `You are a precise meeting summarizer for Discord chats.
+Analyze the following messages from ${context} over ${timeRange} and write an accurate, concise summary that reflects what actually happened.
+
+Context metadata:
+- Participants by message count: ${topParticipants || 'n/a'}
+- Notable keywords: ${topTopics || 'n/a'}${previousSummary ? `
+- Previous day context provided below` : ''}
+
+Instructions:
+- Attribute statements and actions to the exact usernames seen in the transcript. Do not invent names.
+- Prefer concrete points over generic language. Capture disagreements, decisions, and follow-ups.
+- Keep chronology clear. If actions were proposed vs. decided, make that distinction explicit.
+- Keep it ~200-300 words.`;
     if (previousSummary) {
       basePrompt += `\n\nPrevious Day's Summary (context):\n${previousSummary}\n\nPay attention to continuations, follow-ups, and evolving topics.`;
     }
-    const fullPrompt = `${basePrompt}\n\nTranscript:\n${transcript}\n\nFormat the output with clear sections:
+    const fullPrompt = `${basePrompt}\n\nTranscript (each line is [HH:MM] username: message):\n${transcript}\n\nFormat the output with clear sections:
 • Overview (2-3 sentences)
 • Key Topics (bullets)
 • Decisions & Outcomes (bullets)
-• Action Items (bullets with owners, e.g., [Owner] task)
-• Participant Highlights (top contributors and roles)
-Keep it ~200-300 words and attribute names when obvious.`;
+• Action Items (bullets with explicit owners, e.g., [alice] do X)
+• Participant Highlights (who contributed and how)
+Avoid generic filler; be specific to this conversation.`;
 
     if (fits) {
       const result = await callLLMAPI([{ role: 'user', content: fullPrompt }], 500, SUMMARIZATION_MODEL, true);
@@ -625,14 +661,14 @@ Keep it ~200-300 words and attribute names when obvious.`;
       }
     }
 
-    const synthesisPrompt = `You are synthesizing a final daily summary from partial chunk summaries for ${context} over ${timeRange}. Eliminate duplicates, unify themes, resolve contradictions, and attribute actions/decisions to people when stated.
+    const synthesisPrompt = `You are synthesizing a final daily summary from partial chunk summaries for ${context} over ${timeRange}. Eliminate duplicates, unify themes, resolve contradictions, and attribute actions/decisions to people using the exact usernames from the text.
 \nChunk summaries:\n${chunkSummaries.join('\n\n')}\n\nProduce a single, well-structured summary with sections:
 • Overview (2-3 sentences)
 • Key Topics (bullets)
 • Decisions & Outcomes (bullets)
-• Action Items (bullets with owners, e.g., [Owner] task)
-• Participant Highlights (top contributors)
-Keep it ~200-300 words, concise, and easy to scan.`;
+• Action Items (bullets with explicit owners)
+• Participant Highlights (who contributed and how)
+Keep it ~200-300 words, concise, specific, and easy to scan.`;
     const finalResult = await callLLMAPI([{ role: 'user', content: synthesisPrompt }], 520, SUMMARIZATION_MODEL, true);
     const finalText = (finalResult && typeof finalResult === 'string') ? finalResult : '';
     if (!finalText) throw new Error('Empty synthesis result');

@@ -84,7 +84,7 @@ module.exports = {
 
         // Post the embed to channel
         const embed = buildIssueEmbed(issue, interaction.user);
-        const components = [issueActionRow(issue.id, issue.status)];
+        const components = [issueActionRow(issue.id, issue.status, null)];
         const message = await channel.send({ embeds: [embed], components });
 
         // Create a thread for discussion
@@ -104,6 +104,9 @@ module.exports = {
           .run(issue.thread_id, issue.message_id, issue.updated_at, issue.id);
 
         // Reply to user
+        // Rebuild components with message id embedded
+        const refreshedComponents = [issueActionRow(issue.id, issue.status, message.id)];
+        await message.edit({ embeds: [embed], components: refreshedComponents });
         return interaction.editReply({ content: `Issue created in <#${channel.id}>${threadId ? ` with thread <#${threadId}>` : ''}.`, embeds: [embed] });
       }
     } catch (error) {

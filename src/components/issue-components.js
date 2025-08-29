@@ -22,28 +22,28 @@ function getSeverityLabel(severity) {
   return 'Normal';
 }
 
-function issueActionRow(issueId, status) {
+function issueActionRow(issueId, status, messageId) {
   const isBug = (status || '').toLowerCase() === 'bug';
   const isSolved = (status || '').toLowerCase() === 'solved';
   const isOpen = !isBug && !isSolved;
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`issue_bug_${issueId}`)
+      .setCustomId(`issue_bug_${issueId}${messageId ? '_' + messageId : ''}`)
       .setLabel('Mark Bug')
       .setStyle(ButtonStyle.Danger)
       .setDisabled(isBug),
     new ButtonBuilder()
-      .setCustomId(`issue_solved_${issueId}`)
+      .setCustomId(`issue_solved_${issueId}${messageId ? '_' + messageId : ''}`)
       .setLabel('Mark Solved')
       .setStyle(ButtonStyle.Success)
       .setDisabled(isSolved),
     new ButtonBuilder()
-      .setCustomId(`issue_reopen_${issueId}`)
+      .setCustomId(`issue_reopen_${issueId}${messageId ? '_' + messageId : ''}`)
       .setLabel('Reopen')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(isOpen),
     new ButtonBuilder()
-      .setCustomId(`issue_details_${issueId}`)
+      .setCustomId(`issue_details_${issueId}${messageId ? '_' + messageId : ''}`)
       .setLabel('Add Details')
       .setStyle(ButtonStyle.Primary)
   );
