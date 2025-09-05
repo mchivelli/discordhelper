@@ -1064,68 +1064,50 @@ async function analyzeChannelMessages(messages, context = {}) {
     // Build transcript for analysis
     const transcript = buildTranscript(messages);
     
-    // Create detailed developer-focused prompt
-    const analysisPrompt = `You are a developer analyst reviewing a Discord chat transcript. Extract SPECIFIC, ACTIONABLE insights from the ACTUAL conversation below.
-
-Context:
-- Scope: ${context.scope || 'Channel'}
-- Period: Last ${context.days || 7} days
-- Message Count: ${messages.length}
-- Guild: ${context.guildName || 'Unknown'}
-- Channel: ${context.channelName || 'Unknown'}
+    // Create focused developer-focused prompt
+    const analysisPrompt = `Analyze this Discord chat transcript. Extract ONLY what was actually discussed. Be specific and quote real users.
 
 Chat Transcript:
 ${transcript}
 
-IMPORTANT: Base your analysis ONLY on what was actually discussed in the messages above. Use REAL usernames from the chat. Quote SPECIFIC suggestions and concerns mentioned by users.
-
-Provide analysis in this JSON format:
+Return analysis in this JSON format:
 {
-  "summary": "What was actually discussed based on the chat messages",
-  "keyTopics": ["Specific topics mentioned in the messages"],
-  "decisions": ["Actual decisions or agreements from the conversation, or 'No clear decisions reached' if none"],
-  "actionItems": [
+  "actuallyDiscussed": "Brief summary of what users actually talked about",
+  "userConcerns": [
     {
-      "task": "Specific task mentioned by users or implied from their concerns",
-      "priority": "High/Medium/Low based on user urgency/importance",
-      "reason": "Quote or reference the actual user concern that led to this task",
-      "mentionedBy": "Username who suggested this or expressed the concern"
+      "user": "real username from chat",
+      "said": "direct quote or close paraphrase of what they said",
+      "wants": "what they want changed/fixed"
     }
   ],
-  "technicalInsights": {
-    "technologies": ["Only list if actual tech/tools were mentioned in chat"],
-    "patterns": ["Only if actual architecture/patterns were discussed"],
-    "suggestions": ["SPECIFIC technical suggestions users made, with quotes if possible"]
-  },
-  "productivityInsights": {
-    "blockers": ["Actual problems/blockers mentioned by users"],
-    "improvements": ["Specific process improvements users suggested"],
-    "nextSteps": ["Steps users actually proposed or that address their concerns"]
-  },
-  "participantHighlights": {
-    "actualUsername": "What they specifically contributed to the discussion"
-  },
-  "specificConcerns": [
+  "agreements": [
+    "Any actual agreements or decisions made in the chat, or empty array if none"
+  ],
+  "actionableItems": [
     {
-      "user": "actual username",
-      "concern": "direct quote or paraphrase of their specific issue",
-      "suggestedSolution": "any solution they proposed, or 'none suggested'"
+      "task": "Specific task based on actual user request",
+      "requestedBy": "username who asked for this",
+      "urgency": "High/Medium/Low based on how users talked about it"
     }
   ],
-  "playerFeedback": [
-    "Direct quotes or specific player complaints/suggestions from the chat"
+  "technicalMentions": [
+    "Only if users actually mentioned specific technologies, code, or technical details"
+  ],
+  "nextStepsFromChat": [
+    "Specific next steps users actually suggested, or empty if none mentioned"
   ]
 }
 
-RULES:
-- Use ONLY actual usernames from the transcript
-- Quote specific user concerns and suggestions 
-- If no technical discussion occurred, leave technical arrays empty
-- Focus on what users actually want changed or fixed
-- Identify specific player pain points mentioned
-- Don't invent generic responses - be specific to this conversation
+REQUIREMENTS:
+- Use REAL usernames from the transcript
+- Include ACTUAL quotes from users
+- Only list things that were genuinely discussed
+- If users didn't make specific suggestions, say so
+- Don't add generic developer tasks - only what users actually wanted
+- If no clear decisions were made, leave agreements empty
+- Be factual, not interpretive
 
-Return ONLY valid JSON, no additional text.`;
+Return ONLY valid JSON.`;
 
     // Call LLM for analysis using dedicated analysis model
     const analysisModel = process.env.ANALYSIS_MODEL || process.env.SUMMARIZATION_MODEL || process.env.MODEL_NAME;

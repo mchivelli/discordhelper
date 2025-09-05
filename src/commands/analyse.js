@@ -155,190 +155,89 @@ module.exports = {
                 });
             }
 
-            // Create embeds for the analysis
+            // Create simple, focused embeds
             const embeds = [];
 
-            // Main analysis embed
+            // Main summary embed
             const mainEmbed = new EmbedBuilder()
-                .setTitle(`📊 Chat Analysis: ${analysisScope}`)
-                .setDescription(analysis.summary || 'Analysis completed.')
-                .setColor(0x00AE86)
+                .setTitle(`Analysis: ${analysisScope}`)
+                .setDescription(analysis.actuallyDiscussed || 'No clear discussion summary available.')
+                .setColor(0x2ECC71)
                 .setTimestamp()
                 .setFooter({ 
-                    text: `Analyzed ${messages.length} messages from the last ${daysToAnalyze} days`
+                    text: `${messages.length} messages analyzed from last ${daysToAnalyze} days`
                 });
-
-            // Add key insights
-            if (analysis.keyTopics && analysis.keyTopics.length > 0) {
-                mainEmbed.addFields({
-                    name: '🎯 Key Topics Discussed',
-                    value: analysis.keyTopics.map((topic, i) => `${i + 1}. ${topic}`).join('\n').substring(0, 1024),
-                    inline: false
-                });
-            }
-
-            if (analysis.decisions && analysis.decisions.length > 0) {
-                mainEmbed.addFields({
-                    name: '✅ Decisions & Consensus',
-                    value: analysis.decisions.map((decision, i) => `${i + 1}. ${decision}`).join('\n').substring(0, 1024),
-                    inline: false
-                });
-            }
 
             embeds.push(mainEmbed);
 
-            // Developer action items embed
-            if (analysis.actionItems && analysis.actionItems.length > 0) {
-                const actionEmbed = new EmbedBuilder()
-                    .setTitle('🛠️ Developer Action Items')
-                    .setDescription('Prioritized tasks based on actual user concerns:')
+            // User concerns embed - the most important part
+            if (analysis.userConcerns && analysis.userConcerns.length > 0) {
+                const concernsEmbed = new EmbedBuilder()
+                    .setTitle('What Users Actually Said')
                     .setColor(0x3498DB);
 
-                const actionItemsText = analysis.actionItems
-                    .map((item, i) => {
-                        let taskText = `**${i + 1}.** ${item.task}\n   📌 Priority: ${item.priority || 'Normal'}`;
-                        if (item.mentionedBy) {
-                            taskText += `\n   👤 Mentioned by: ${item.mentionedBy}`;
-                        }
-                        taskText += `\n   💡 *${item.reason || 'Derived from discussion'}*`;
-                        return taskText;
-                    })
+                const concernsText = analysis.userConcerns
+                    .map((concern, i) => `**${concern.user}**: "${concern.said}"\n> Wants: ${concern.wants}`)
                     .join('\n\n');
 
-                actionEmbed.addFields({
-                    name: 'Implementation Tasks',
-                    value: actionItemsText.substring(0, 4096),
-                    inline: false
-                });
-
-                embeds.push(actionEmbed);
-            }
-
-            // Specific player concerns embed
-            if (analysis.specificConcerns && analysis.specificConcerns.length > 0) {
-                const concernsEmbed = new EmbedBuilder()
-                    .setTitle('🎯 Player Concerns & Suggestions')
-                    .setDescription('Specific issues raised by community members:')
-                    .setColor(0xE67E22);
-
-                const concernsText = analysis.specificConcerns
-                    .map((concern, i) => `**${concern.user}:** ${concern.concern}\n   💡 *Suggested solution: ${concern.suggestedSolution}*`)
-                    .join('\n\n');
-
-                concernsEmbed.addFields({
-                    name: 'Player Feedback',
-                    value: concernsText.substring(0, 4096),
-                    inline: false
-                });
-
+                concernsEmbed.setDescription(concernsText.substring(0, 4096));
                 embeds.push(concernsEmbed);
             }
 
-            // Direct player feedback embed
-            if (analysis.playerFeedback && analysis.playerFeedback.length > 0) {
-                const feedbackEmbed = new EmbedBuilder()
-                    .setTitle('💬 Direct Player Quotes')
-                    .setDescription('Key feedback from the discussion:')
-                    .setColor(0x9B59B6);
+            // Agreements/decisions (if any)
+            if (analysis.agreements && analysis.agreements.length > 0) {
+                const agreementsEmbed = new EmbedBuilder()
+                    .setTitle('Decisions Made')
+                    .setColor(0x27AE60);
 
-                const feedbackText = analysis.playerFeedback
-                    .map((feedback, i) => `${i + 1}. "${feedback}"`)
+                const agreementsText = analysis.agreements
+                    .map((agreement, i) => `${i + 1}. ${agreement}`)
                     .join('\n');
 
-                feedbackEmbed.addFields({
-                    name: 'Player Voices',
-                    value: feedbackText.substring(0, 4096),
-                    inline: false
-                });
-
-                embeds.push(feedbackEmbed);
+                agreementsEmbed.setDescription(agreementsText.substring(0, 4096));
+                embeds.push(agreementsEmbed);
             }
 
-            // Technical insights embed (if detailed mode)
-            if (detailed && analysis.technicalInsights) {
-                const techEmbed = new EmbedBuilder()
-                    .setTitle('🔧 Technical Analysis')
+            // Action items (only if users actually requested them)
+            if (analysis.actionableItems && analysis.actionableItems.length > 0) {
+                const actionsEmbed = new EmbedBuilder()
+                    .setTitle('What Users Want You To Do')
                     .setColor(0xE74C3C);
 
-                if (analysis.technicalInsights.technologies) {
-                    techEmbed.addFields({
-                        name: '💻 Technologies Mentioned',
-                        value: analysis.technicalInsights.technologies.join(', ').substring(0, 1024),
-                        inline: false
-                    });
-                }
+                const actionsText = analysis.actionableItems
+                    .map((item, i) => `**${i + 1}.** ${item.task}\nRequested by: ${item.requestedBy} (${item.urgency} priority)`)
+                    .join('\n\n');
 
-                if (analysis.technicalInsights.patterns) {
-                    techEmbed.addFields({
-                        name: '📐 Design Patterns & Architecture',
-                        value: analysis.technicalInsights.patterns.join('\n').substring(0, 1024),
-                        inline: false
-                    });
-                }
-
-                if (analysis.technicalInsights.suggestions) {
-                    techEmbed.addFields({
-                        name: '💡 Technical Suggestions',
-                        value: analysis.technicalInsights.suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n').substring(0, 1024),
-                        inline: false
-                    });
-                }
-
-                embeds.push(techEmbed);
+                actionsEmbed.setDescription(actionsText.substring(0, 4096));
+                embeds.push(actionsEmbed);
             }
 
-            // Productivity insights embed
-            if (analysis.productivityInsights) {
-                const prodEmbed = new EmbedBuilder()
-                    .setTitle('📈 Productivity Insights')
-                    .setColor(0x2ECC71);
-
-                if (analysis.productivityInsights.blockers) {
-                    prodEmbed.addFields({
-                        name: '🚧 Identified Blockers',
-                        value: analysis.productivityInsights.blockers.join('\n').substring(0, 1024),
-                        inline: false
-                    });
-                }
-
-                if (analysis.productivityInsights.improvements) {
-                    prodEmbed.addFields({
-                        name: '⚡ Process Improvements',
-                        value: analysis.productivityInsights.improvements.join('\n').substring(0, 1024),
-                        inline: false
-                    });
-                }
-
-                if (analysis.productivityInsights.nextSteps) {
-                    prodEmbed.addFields({
-                        name: '➡️ Recommended Next Steps',
-                        value: analysis.productivityInsights.nextSteps.join('\n').substring(0, 1024),
-                        inline: false
-                    });
-                }
-
-                embeds.push(prodEmbed);
-            }
-
-            // Participant insights (if available)
-            if (analysis.participantHighlights) {
-                const participantEmbed = new EmbedBuilder()
-                    .setTitle('👥 Participant Contributions')
-                    .setDescription('Key contributors and their focus areas:')
+            // Next steps (if mentioned)
+            if (analysis.nextStepsFromChat && analysis.nextStepsFromChat.length > 0) {
+                const nextEmbed = new EmbedBuilder()
+                    .setTitle('Next Steps Suggested')
                     .setColor(0x9B59B6);
 
-                const participantText = Object.entries(analysis.participantHighlights)
-                    .slice(0, 5) // Limit to top 5 contributors
-                    .map(([user, contribution]) => `**${user}:** ${contribution}`)
+                const nextText = analysis.nextStepsFromChat
+                    .map((step, i) => `${i + 1}. ${step}`)
                     .join('\n');
 
-                participantEmbed.addFields({
-                    name: 'Top Contributors',
-                    value: participantText.substring(0, 1024),
-                    inline: false
-                });
+                nextEmbed.setDescription(nextText.substring(0, 4096));
+                embeds.push(nextEmbed);
+            }
 
-                embeds.push(participantEmbed);
+            // Technical mentions (only if actually discussed)
+            if (detailed && analysis.technicalMentions && analysis.technicalMentions.length > 0) {
+                const techEmbed = new EmbedBuilder()
+                    .setTitle('Technical Details Mentioned')
+                    .setColor(0x95A5A6);
+
+                const techText = analysis.technicalMentions
+                    .map((mention, i) => `${i + 1}. ${mention}`)
+                    .join('\n');
+
+                techEmbed.setDescription(techText.substring(0, 4096));
+                embeds.push(techEmbed);
             }
 
             // Send the analysis
