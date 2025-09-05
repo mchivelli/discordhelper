@@ -918,7 +918,7 @@ function getExistingSummaries(db, guildId, channelId = null, days = 7) {
  */
 async function getChannelMessages(guildId, channelId, startTime, discordChannel = null) {
   try {
-    const db = getDb();
+    const db = require('./db');
     let messages;
     
     if (channelId) {
