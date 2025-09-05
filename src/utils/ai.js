@@ -1180,11 +1180,12 @@ function validateAndEnhanceAnalysis(analysis, messages, context) {
 // Export all functions
 module.exports = {
     callLLMAPI,
-    generateTaskPrerequisites,
+    getPrereqs,
     enhanceAnnouncement,
-    generateSuggestions,
+    getSuggestions,
     generateTaskStages,
-    enhanceNoteAndDescription,
+    enhanceTaskNote,
+    enhanceTaskDescription,
     generateFollowUpTasks,
     checkAIStatus,
     storeChatMessage,
