@@ -1291,54 +1291,20 @@ function generateFallbackAnalysis(messages, context) {
  * @returns {Object} Validated analysis
  */
 function validateAndEnhanceAnalysis(analysis, messages, context) {
-  // Ensure all required fields exist
+  console.log('[AI] Validating analysis structure:', Object.keys(analysis));
+  
+  // Preserve the new analysis format - just ensure required fields exist
   const validatedAnalysis = {
-    summary: analysis.summary || `Analysis of ${messages.length} messages from ${context.scope}`,
-    keyTopics: Array.isArray(analysis.keyTopics) ? analysis.keyTopics : [],
-    decisions: Array.isArray(analysis.decisions) ? analysis.decisions : [],
-    actionItems: Array.isArray(analysis.actionItems) ? analysis.actionItems : [],
-    technicalInsights: analysis.technicalInsights || {},
-    productivityInsights: analysis.productivityInsights || {},
-    participantHighlights: analysis.participantHighlights || {}
+    actuallyDiscussed: analysis.actuallyDiscussed || 'No clear discussion summary available.',
+    userConcerns: Array.isArray(analysis.userConcerns) ? analysis.userConcerns : [],
+    agreements: Array.isArray(analysis.agreements) ? analysis.agreements : [],
+    actionableItems: Array.isArray(analysis.actionableItems) ? analysis.actionableItems : [],
+    technicalMentions: Array.isArray(analysis.technicalMentions) ? analysis.technicalMentions : [],
+    nextStepsFromChat: Array.isArray(analysis.nextStepsFromChat) ? analysis.nextStepsFromChat : []
   };
   
-  // Ensure technicalInsights has proper structure
-  if (!validatedAnalysis.technicalInsights.technologies) {
-    validatedAnalysis.technicalInsights.technologies = [];
-  }
-  if (!validatedAnalysis.technicalInsights.patterns) {
-    validatedAnalysis.technicalInsights.patterns = [];
-  }
-  if (!validatedAnalysis.technicalInsights.suggestions) {
-    validatedAnalysis.technicalInsights.suggestions = [];
-  }
-  
-  // Ensure productivityInsights has proper structure
-  if (!validatedAnalysis.productivityInsights.blockers) {
-    validatedAnalysis.productivityInsights.blockers = [];
-  }
-  if (!validatedAnalysis.productivityInsights.improvements) {
-    validatedAnalysis.productivityInsights.improvements = [];
-  }
-  if (!validatedAnalysis.productivityInsights.nextSteps) {
-    validatedAnalysis.productivityInsights.nextSteps = [];
-  }
-  
-  // Ensure action items have proper structure
-  validatedAnalysis.actionItems = validatedAnalysis.actionItems.map(item => {
-    if (typeof item === 'string') {
-      return {
-        task: item,
-        priority: 'Medium',
-        reason: 'Identified from discussion'
-      };
-    }
-    return {
-      task: item.task || 'Review required',
-      priority: item.priority || 'Medium',
-      reason: item.reason || 'Identified from discussion'
-    };
-  });
+  console.log('[AI] Validated analysis keys:', Object.keys(validatedAnalysis));
+  console.log('[AI] actuallyDiscussed:', validatedAnalysis.actuallyDiscussed.substring(0, 100) + '...');
   
   return validatedAnalysis;
 }
