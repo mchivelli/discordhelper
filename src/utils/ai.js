@@ -937,18 +937,22 @@ async function getChannelMessages(guildId, channelId, startTime, discordChannel 
       `).all(guildId, startTime);
     }
     
+    console.log(`[AI] Database query returned ${messages ? messages.length : 'null'} messages`);
+    
     // If no messages in database and we have a Discord channel, fetch from Discord
     if ((!messages || messages.length === 0) && discordChannel && channelId) {
-      logger.info(`No stored messages found (${messages ? messages.length : 'null'}), attempting Discord fallback for channel ${channelId} (${discordChannel.name})`);
+      console.log(`[AI] No stored messages found, attempting Discord fallback for channel ${channelId} (${discordChannel.name})`);
       try {
         messages = await fetchMessagesFromDiscord(discordChannel, startTime, db);
-        logger.info(`Discord fallback returned ${messages.length} messages`);
+        console.log(`[AI] Discord fallback returned ${messages.length} messages`);
       } catch (error) {
-        logger.error(`Discord fallback failed: ${error.message}`);
+        console.error(`[AI] Discord fallback failed: ${error.message}`);
         messages = [];
       }
     } else if (!discordChannel && channelId) {
-      logger.warn(`No Discord channel object provided for fallback fetching (channelId: ${channelId})`);
+      console.warn(`[AI] No Discord channel object provided for fallback fetching (channelId: ${channelId})`);
+    } else if (messages && messages.length > 0) {
+      console.log(`[AI] Using ${messages.length} messages from database`);
     }
     
     return messages || [];
@@ -970,15 +974,21 @@ async function fetchMessagesFromDiscord(channel, startTime, db) {
     const messages = [];
     const startDate = new Date(startTime);
     
-    logger.info(`Fetching messages from Discord channel ${channel.name} (${channel.id}) since ${startDate.toISOString()}`);
+    console.log(`[DISCORD-FETCH] Fetching messages from Discord channel ${channel.name} (${channel.id}) since ${startDate.toISOString()}`);
     
     // Check if bot has permission to read message history
     const permissions = channel.permissionsFor(channel.guild.members.me);
-    if (!permissions || !permissions.has('ReadMessageHistory')) {
+    console.log(`[DISCORD-FETCH] Checking permissions for channel ${channel.name}`);
+    
+    if (!permissions) {
+      throw new Error(`Cannot get permissions for channel #${channel.name}`);
+    }
+    
+    if (!permissions.has('ReadMessageHistory')) {
       throw new Error(`Bot missing 'Read Message History' permission in #${channel.name}`);
     }
     
-    logger.info(`Bot has required permissions in #${channel.name}, fetching messages...`);
+    console.log(`[DISCORD-FETCH] Bot has required permissions in #${channel.name}, fetching messages...`);
     
     // Fetch messages in batches
     let lastId = null;

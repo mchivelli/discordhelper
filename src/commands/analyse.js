@@ -109,12 +109,16 @@ module.exports = {
             });
 
             // Get messages from database with Discord fallback
+            console.log(`[ANALYSE] Starting message retrieval for ${analysisScope}`);
+            console.log(`[ANALYSE] Channel ID: ${channelId}, Guild ID: ${guildId}`);
+            console.log(`[ANALYSE] Time range: ${new Date(startTime).toISOString()} to now`);
+            
             const discordChannel = channelId ? interaction.guild.channels.cache.get(channelId) : null;
-            logger.info(`Discord channel lookup: ${channelId} -> ${discordChannel ? discordChannel.name : 'null'}`);
+            console.log(`[ANALYSE] Discord channel lookup: ${channelId} -> ${discordChannel ? discordChannel.name : 'null'}`);
             
             const messages = await getChannelMessages(guildId, channelId, startTime, discordChannel);
 
-            logger.info(`Retrieved ${messages.length} messages for analysis from ${analysisScope}`);
+            console.log(`[ANALYSE] Retrieved ${messages.length} messages for analysis from ${analysisScope}`);
 
             if (!messages || messages.length === 0) {
                 let errorMessage = `❌ No messages found in ${analysisScope} for the last ${daysToAnalyze} days.\n\n`;
