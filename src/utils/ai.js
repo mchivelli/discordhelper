@@ -906,21 +906,292 @@ function getExistingSummaries(db, guildId, channelId = null, days = 7) {
   }
 }
 
-module.exports = { 
-  getPrereqs, 
-  enhanceAnnouncement, 
-  getSuggestions, 
-  generateTaskStages, 
-  generateFollowUpTasks,
-  enhanceTaskNote,
-  enhanceTaskDescription,
-  checkAIStatus,
-  storeChatMessage,
-  generateChatSummary,
-  getRecentMessages,
-  getPreviousDayMessages,
-  getMessagesFromSourceChannels,
-  getPreviousDaySummary,
-  saveChatSummary,
-  getExistingSummaries
+// ... (new functions added below)
+
+/**
+ * Get channel messages from the database for analysis
+ * @param {string} guildId - Guild ID
+ * @param {string|null} channelId - Channel ID (null for server-wide)
+ * @param {number} startTime - Start timestamp
+ * @returns {Promise<Array>} Messages array
+ */
+async function getChannelMessages(guildId, channelId, startTime) {
+  try {
+    const db = getDb();
+    let messages;
+    
+    if (channelId) {
+      // Get messages from specific channel
+      messages = db.prepare(`
+        SELECT * FROM chat_messages 
+        WHERE guild_id = ? AND channel_id = ? AND timestamp >= ?
+        ORDER BY timestamp ASC
+      `).all(guildId, channelId, startTime);
+    } else {
+      // Get messages from all channels in guild
+      messages = db.prepare(`
+        SELECT * FROM chat_messages 
+        WHERE guild_id = ? AND timestamp >= ?
+        ORDER BY timestamp ASC
+      `).all(guildId, startTime);
+    }
+    
+    return messages || [];
+  } catch (error) {
+    logger.error('Error fetching channel messages:', error);
+    return [];
+  }
+}
+
+/**
+ * Analyze channel messages with developer-focused insights
+ * @param {Array} messages - Array of messages to analyze
+ * @param {Object} context - Additional context for analysis
+ * @returns {Promise<Object>} Analysis results
+ */
+async function analyzeChannelMessages(messages, context = {}) {
+  try {
+    if (!messages || messages.length === 0) {
+      return { error: 'No messages to analyze' };
+    }
+
+    // Build transcript for analysis
+    const transcript = buildTranscript(messages);
+    
+    // Create detailed developer-focused prompt
+    const analysisPrompt = `You are an expert technical analyst and development consultant. Analyze the following chat discussion and provide actionable, developer-focused insights.
+
+Context:
+- Scope: ${context.scope || 'Channel'}
+- Period: Last ${context.days || 7} days
+- Message Count: ${messages.length}
+- Guild: ${context.guildName || 'Unknown'}
+- Channel: ${context.channelName || 'Unknown'}
+
+Chat Transcript:
+${transcript}
+
+Provide a comprehensive analysis in the following JSON format:
+{
+  "summary": "2-3 sentence executive summary of the discussion",
+  "keyTopics": ["array of 3-5 main topics discussed"],
+  "decisions": ["array of key decisions or consensus reached"],
+  "actionItems": [
+    {
+      "task": "specific development task",
+      "priority": "High/Medium/Low",
+      "reason": "why this is important"
+    }
+  ],
+  "technicalInsights": {
+    "technologies": ["technologies, frameworks, or tools mentioned"],
+    "patterns": ["design patterns or architectural decisions discussed"],
+    "suggestions": ["technical recommendations for implementation"]
+  },
+  "productivityInsights": {
+    "blockers": ["identified obstacles or challenges"],
+    "improvements": ["process or workflow improvements suggested"],
+    "nextSteps": ["immediate next steps for the team"]
+  },
+  "participantHighlights": {
+    "username": "their key contribution or expertise area"
+  }
+}
+
+Focus on:
+1. Technical decisions and their implications
+2. Implementation details and code architecture
+3. Problems that need solving with concrete solutions
+4. Action items that developers can immediately work on
+5. Best practices and patterns that should be followed
+6. Dependencies, integrations, and technical requirements
+7. Performance, security, or scalability concerns
+8. Testing strategies and quality assurance needs
+
+${context.detailed ? 'Include detailed technical analysis with specific implementation recommendations and potential code patterns.' : 'Provide concise, actionable insights.'}
+
+Return ONLY valid JSON, no additional text or markdown.`;
+
+    // Call LLM for analysis using dedicated analysis model
+    const analysisModel = process.env.ANALYSIS_MODEL || process.env.SUMMARIZATION_MODEL || process.env.MODEL_NAME;
+    const response = await callLLMAPI(analysisPrompt, 'json_object', analysisModel);
+    
+    if (!response || response.error) {
+      logger.warn('AI analysis failed, generating fallback analysis');
+      return generateFallbackAnalysis(messages, context);
+    }
+
+    // Parse the JSON response
+    let analysis;
+    try {
+      analysis = JSON.parse(response);
+    } catch (parseError) {
+      logger.error('Failed to parse AI analysis response:', parseError);
+      // Try to extract JSON from the response
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          analysis = JSON.parse(jsonMatch[0]);
+        } catch {
+          return generateFallbackAnalysis(messages, context);
+        }
+      } else {
+        return generateFallbackAnalysis(messages, context);
+      }
+    }
+
+    // Validate and enhance the analysis
+    analysis = validateAndEnhanceAnalysis(analysis, messages, context);
+    
+    return analysis;
+  } catch (error) {
+    logger.error('Error in analyzeChannelMessages:', error);
+    return generateFallbackAnalysis(messages, context);
+  }
+}
+
+/**
+ * Generate fallback analysis when AI is unavailable
+ * @param {Array} messages - Messages array
+ * @param {Object} context - Analysis context
+ * @returns {Object} Fallback analysis
+ */
+function generateFallbackAnalysis(messages, context) {
+  // Group messages by user
+  const userMessages = {};
+  const topics = new Set();
+  const mentions = new Set();
+  
+  messages.forEach(msg => {
+    if (!userMessages[msg.username]) {
+      userMessages[msg.username] = 0;
+    }
+    userMessages[msg.username]++;
+    
+    // Extract potential topics (words longer than 4 chars)
+    const words = msg.content.toLowerCase().split(/\s+/);
+    words.forEach(word => {
+      if (word.length > 4 && !word.startsWith('http')) {
+        topics.add(word);
+      }
+    });
+    
+    // Extract mentions
+    const mentionMatches = msg.content.match(/@\w+/g);
+    if (mentionMatches) {
+      mentionMatches.forEach(mention => mentions.add(mention));
+    }
+  });
+  
+  // Get top contributors
+  const topContributors = Object.entries(userMessages)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .reduce((acc, [user, count]) => {
+      acc[user] = `${count} messages`;
+      return acc;
+    }, {});
+  
+  return {
+    summary: `Analysis of ${messages.length} messages from ${context.scope || 'the channel'} over the last ${context.days || 7} days. This is a fallback analysis - AI service is currently unavailable.`,
+    keyTopics: Array.from(topics).slice(0, 5),
+    decisions: ['Unable to extract decisions - manual review recommended'],
+    actionItems: [
+      {
+        task: 'Review chat transcript manually for action items',
+        priority: 'High',
+        reason: 'Automated analysis unavailable'
+      }
+    ],
+    technicalInsights: {
+      technologies: ['Unable to extract - manual review needed'],
+      patterns: [],
+      suggestions: ['Enable AI service for detailed technical analysis']
+    },
+    productivityInsights: {
+      blockers: ['AI analysis service unavailable'],
+      improvements: ['Restore AI service connection'],
+      nextSteps: ['Manual review of discussion required']
+    },
+    participantHighlights: topContributors
+  };
+}
+
+/**
+ * Validate and enhance analysis results
+ * @param {Object} analysis - Raw analysis from AI
+ * @param {Array} messages - Original messages
+ * @param {Object} context - Analysis context
+ * @returns {Object} Validated analysis
+ */
+function validateAndEnhanceAnalysis(analysis, messages, context) {
+  // Ensure all required fields exist
+  const validatedAnalysis = {
+    summary: analysis.summary || `Analysis of ${messages.length} messages from ${context.scope}`,
+    keyTopics: Array.isArray(analysis.keyTopics) ? analysis.keyTopics : [],
+    decisions: Array.isArray(analysis.decisions) ? analysis.decisions : [],
+    actionItems: Array.isArray(analysis.actionItems) ? analysis.actionItems : [],
+    technicalInsights: analysis.technicalInsights || {},
+    productivityInsights: analysis.productivityInsights || {},
+    participantHighlights: analysis.participantHighlights || {}
+  };
+  
+  // Ensure technicalInsights has proper structure
+  if (!validatedAnalysis.technicalInsights.technologies) {
+    validatedAnalysis.technicalInsights.technologies = [];
+  }
+  if (!validatedAnalysis.technicalInsights.patterns) {
+    validatedAnalysis.technicalInsights.patterns = [];
+  }
+  if (!validatedAnalysis.technicalInsights.suggestions) {
+    validatedAnalysis.technicalInsights.suggestions = [];
+  }
+  
+  // Ensure productivityInsights has proper structure
+  if (!validatedAnalysis.productivityInsights.blockers) {
+    validatedAnalysis.productivityInsights.blockers = [];
+  }
+  if (!validatedAnalysis.productivityInsights.improvements) {
+    validatedAnalysis.productivityInsights.improvements = [];
+  }
+  if (!validatedAnalysis.productivityInsights.nextSteps) {
+    validatedAnalysis.productivityInsights.nextSteps = [];
+  }
+  
+  // Ensure action items have proper structure
+  validatedAnalysis.actionItems = validatedAnalysis.actionItems.map(item => {
+    if (typeof item === 'string') {
+      return {
+        task: item,
+        priority: 'Medium',
+        reason: 'Identified from discussion'
+      };
+    }
+    return {
+      task: item.task || 'Review required',
+      priority: item.priority || 'Medium',
+      reason: item.reason || 'Identified from discussion'
+    };
+  });
+  
+  return validatedAnalysis;
+}
+
+// Export all functions
+module.exports = {
+    callLLMAPI,
+    generateTaskPrerequisites,
+    enhanceAnnouncement,
+    generateSuggestions,
+    generateTaskStages,
+    enhanceNoteAndDescription,
+    generateFollowUpTasks,
+    checkAIStatus,
+    storeChatMessage,
+    generateOfflineSummary,
+    generateChatSummary,
+    getRecentMessages,
+    getPreviousDayMessages,
+    getChannelMessages,
+    analyzeChannelMessages
 };

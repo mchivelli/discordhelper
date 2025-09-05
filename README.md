@@ -197,6 +197,15 @@ node -e "require('./src/utils/ai').checkAIStatus().then(console.log)"
 - `/summarize server [hours]` - Generate server-wide activity summary (requires Manage Messages)
 - `/summarize history [days]` - View recent summaries and activity reports
 
+### Chat Analysis (NEW!)
+- `/analyse channel <channel> [days] [detailed]` - Analyze a specific channel's chat history with developer-focused insights
+- `/analyse current [days] [detailed]` - Analyze the current channel's recent history
+- `/analyse server [days] [detailed]` - Analyze entire server's recent chat history
+  - Generates actionable developer tasks with priorities
+  - Identifies technical decisions and architectural patterns
+  - Provides productivity insights and blockers
+  - Admin-only command for comprehensive team analysis
+
 ## Troubleshooting
 
 ### Common Issues
