@@ -1120,7 +1120,16 @@ Return ONLY valid JSON, no additional text or markdown.`;
 
     // Call LLM for analysis using dedicated analysis model
     const analysisModel = process.env.ANALYSIS_MODEL || process.env.SUMMARIZATION_MODEL || process.env.MODEL_NAME;
-    const response = await callLLMAPI(analysisPrompt, 'json_object', analysisModel);
+    
+    const analysisMessages = [
+      {
+        role: 'user',
+        content: analysisPrompt
+      }
+    ];
+    
+    console.log(`[AI] Calling LLM API for analysis with model: ${analysisModel}`);
+    const response = await callLLMAPI(analysisMessages, 4000, analysisModel, true);
     
     if (!response || response.error) {
       logger.warn('AI analysis failed, generating fallback analysis');
