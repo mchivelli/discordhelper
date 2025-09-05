@@ -108,16 +108,19 @@ module.exports = {
                 content: `🔍 Analyzing ${analysisScope} (last ${daysToAnalyze} days)...\nThis may take a moment.`
             });
 
-            // Get messages from database
-            const messages = await getChannelMessages(guildId, channelId, startTime);
+            // Get messages from database with Discord fallback
+            const discordChannel = channelId ? interaction.guild.channels.cache.get(channelId) : null;
+            const messages = await getChannelMessages(guildId, channelId, startTime, discordChannel);
+
+            logger.info(`Retrieved ${messages.length} messages for analysis from ${analysisScope}`);
 
             if (!messages || messages.length === 0) {
                 return interaction.editReply({
-                    content: `❌ No messages found in ${analysisScope} for the last ${daysToAnalyze} days.`
+                    content: `❌ No messages found in ${analysisScope} for the last ${daysToAnalyze} days.\n💡 **Tip:** Make sure the bot has been running and storing messages, or try a shorter time period.`
                 });
             }
 
-            logger.info(`Analyzing ${messages.length} messages from ${analysisScope}`);
+            logger.info(`Analyzing ${messages.length} messages from ${analysisScope} (${new Date(startTime).toISOString()} to now)`);
 
             // Perform AI analysis
             const analysis = await analyzeChannelMessages(messages, {

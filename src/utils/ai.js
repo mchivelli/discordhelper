@@ -909,13 +909,14 @@ function getExistingSummaries(db, guildId, channelId = null, days = 7) {
 // ... (new functions added below)
 
 /**
- * Get channel messages from the database for analysis
+ * Get channel messages for analysis - tries database first, then fetches from Discord
  * @param {string} guildId - Guild ID
  * @param {string|null} channelId - Channel ID (null for server-wide)
  * @param {number} startTime - Start timestamp
+ * @param {Object} discordChannel - Discord channel object for fallback fetching
  * @returns {Promise<Array>} Messages array
  */
-async function getChannelMessages(guildId, channelId, startTime) {
+async function getChannelMessages(guildId, channelId, startTime, discordChannel = null) {
   try {
     const db = getDb();
     let messages;
@@ -936,9 +937,88 @@ async function getChannelMessages(guildId, channelId, startTime) {
       `).all(guildId, startTime);
     }
     
+    // If no messages in database and we have a Discord channel, fetch from Discord
+    if ((!messages || messages.length === 0) && discordChannel && channelId) {
+      logger.info(`No stored messages found, fetching from Discord for channel ${channelId}`);
+      messages = await fetchMessagesFromDiscord(discordChannel, startTime, db);
+    }
+    
     return messages || [];
   } catch (error) {
     logger.error('Error fetching channel messages:', error);
+    return [];
+  }
+}
+
+/**
+ * Fetch messages directly from Discord and store them
+ * @param {Object} channel - Discord channel object
+ * @param {number} startTime - Start timestamp
+ * @param {Object} db - Database instance
+ * @returns {Promise<Array>} Messages array
+ */
+async function fetchMessagesFromDiscord(channel, startTime, db) {
+  try {
+    const messages = [];
+    const startDate = new Date(startTime);
+    
+    logger.info(`Fetching messages from Discord channel ${channel.name} since ${startDate.toISOString()}`);
+    
+    // Fetch messages in batches
+    let lastId = null;
+    let fetchedCount = 0;
+    const maxMessages = 500; // Reasonable limit
+    
+    while (fetchedCount < maxMessages) {
+      const fetchOptions = {
+        limit: 100,
+      };
+      
+      if (lastId) {
+        fetchOptions.before = lastId;
+      }
+      
+      const batch = await channel.messages.fetch(fetchOptions);
+      if (batch.size === 0) break;
+      
+      let foundOldMessage = false;
+      
+      for (const [, message] of batch) {
+        if (message.createdTimestamp < startTime) {
+          foundOldMessage = true;
+          break;
+        }
+        
+        // Store message in database for future use
+        storeChatMessage(db, message);
+        
+        // Add to our results
+        messages.push({
+          id: `${message.guild.id}_${message.channel.id}_${message.id}`,
+          guild_id: message.guild.id,
+          channel_id: message.channel.id,
+          message_id: message.id,
+          username: message.author.username,
+          content: message.content,
+          timestamp: message.createdTimestamp,
+          created_at: Date.now()
+        });
+        
+        fetchedCount++;
+        lastId = message.id;
+      }
+      
+      if (foundOldMessage || batch.size < 100) break;
+    }
+    
+    // Sort by timestamp ascending
+    messages.sort((a, b) => a.timestamp - b.timestamp);
+    
+    logger.info(`Fetched ${messages.length} messages from Discord channel ${channel.name}`);
+    return messages;
+    
+  } catch (error) {
+    logger.error('Error fetching messages from Discord:', error);
     return [];
   }
 }
@@ -1194,5 +1274,6 @@ module.exports = {
     getRecentMessages,
     getPreviousDayMessages,
     getChannelMessages,
+    fetchMessagesFromDiscord,
     analyzeChannelMessages
 };
