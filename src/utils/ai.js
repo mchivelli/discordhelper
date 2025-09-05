@@ -543,6 +543,35 @@ function buildTranscript(lines, maxTokenBudget) {
   return { transcript: out.join('\n'), usedCount, fits: usedCount === lines.length };
 }
 
+function buildAnalysisTranscript(messages, maxTokenBudget = 12000) {
+  let usedTokens = 0;
+  const out = [];
+  let usedCount = 0;
+  
+  for (const m of messages) {
+    // Skip empty messages
+    if (!m.content || m.content.trim().length === 0) continue;
+    
+    // Compact format: username: content
+    const line = `${m.username}: ${m.content}`;
+    const tokenCount = estimateTokensFromText(line) + 1;
+    
+    if (maxTokenBudget && usedTokens + tokenCount > maxTokenBudget) break;
+    
+    usedTokens += tokenCount;
+    out.push(line);
+    usedCount++;
+  }
+  
+  return {
+    transcript: out.join('\n'),
+    usedCount,
+    totalMessages: messages.length,
+    tokenCount: usedTokens,
+    fits: usedCount === messages.length
+  };
+}
+
 async function summarizeChunk(transcript, chunkIndex, totalChunks, context) {
   const chunkPrompt = `You are summarizing Discord messages for ${context}.
 This is chunk ${chunkIndex} of ${totalChunks}. Read the compact transcript and produce 6-10 tagged bullet points using these tags:
@@ -1061,8 +1090,30 @@ async function analyzeChannelMessages(messages, context = {}) {
       return { error: 'No messages to analyze' };
     }
 
-    // Build transcript for analysis
-    const transcript = buildTranscript(messages);
+    // Build optimized transcript for analysis
+    console.log(`[AI] Processing ${messages.length} messages for analysis`);
+    
+    // Filter out bot messages and system messages for cleaner analysis
+    const humanMessages = messages.filter(m => 
+      m.content && 
+      m.content.trim().length > 0 && 
+      !m.username.includes('bot') &&
+      !m.content.startsWith('!') &&
+      !m.content.startsWith('/')
+    );
+    
+    console.log(`[AI] Filtered to ${humanMessages.length} relevant messages`);
+    
+    // Use optimized transcript builder with higher token budget
+    const maxTokens = 12000; // More tokens for better analysis
+    const { transcript, usedCount, tokenCount, totalMessages } = buildAnalysisTranscript(humanMessages, maxTokens);
+    
+    console.log(`[AI] Compiled transcript: ${usedCount}/${totalMessages} messages, ${tokenCount} tokens`);
+    
+    if (!transcript || transcript.trim().length === 0) {
+      console.log('[AI] No valid transcript generated, falling back');
+      return generateFallbackAnalysis(messages, context);
+    }
     
     // Create focused developer-focused prompt
     const analysisPrompt = `Analyze this Discord chat transcript. Extract ONLY what was actually discussed. Be specific and quote real users.
@@ -1120,10 +1171,14 @@ Return ONLY valid JSON.`;
     ];
     
     console.log(`[AI] Calling LLM API for analysis with model: ${analysisModel}`);
-    const response = await callLLMAPI(analysisMessages, 4000, analysisModel, true);
+    console.log(`[AI] Transcript: ${transcript.length} chars, ${tokenCount} tokens`);
+    
+    const response = await callLLMAPI(analysisMessages, 6000, analysisModel, true);
+    
+    console.log(`[AI] Raw response:`, response ? (typeof response === 'string' ? response.substring(0, 200) + '...' : JSON.stringify(response).substring(0, 200) + '...') : 'null');
     
     if (!response || response.error) {
-      logger.warn('AI analysis failed, generating fallback analysis');
+      console.error('[AI] Analysis failed:', response?.error || 'No response received');
       return generateFallbackAnalysis(messages, context);
     }
 
@@ -1132,16 +1187,21 @@ Return ONLY valid JSON.`;
     try {
       analysis = JSON.parse(response);
     } catch (parseError) {
-      logger.error('Failed to parse AI analysis response:', parseError);
+      console.error('[AI] Failed to parse AI response as JSON:', parseError.message);
+      console.error('[AI] Raw response that failed to parse:', response);
+      
       // Try to extract JSON from the response
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
+        console.log('[AI] Found JSON match, attempting to parse:', jsonMatch[0].substring(0, 100) + '...');
         try {
           analysis = JSON.parse(jsonMatch[0]);
-        } catch {
+        } catch (secondError) {
+          console.error('[AI] Second JSON parse failed:', secondError.message);
           return generateFallbackAnalysis(messages, context);
         }
       } else {
+        console.error('[AI] No JSON found in response');
         return generateFallbackAnalysis(messages, context);
       }
     }
