@@ -110,14 +110,28 @@ module.exports = {
 
             // Get messages from database with Discord fallback
             const discordChannel = channelId ? interaction.guild.channels.cache.get(channelId) : null;
+            logger.info(`Discord channel lookup: ${channelId} -> ${discordChannel ? discordChannel.name : 'null'}`);
+            
             const messages = await getChannelMessages(guildId, channelId, startTime, discordChannel);
 
             logger.info(`Retrieved ${messages.length} messages for analysis from ${analysisScope}`);
 
             if (!messages || messages.length === 0) {
-                return interaction.editReply({
-                    content: `❌ No messages found in ${analysisScope} for the last ${daysToAnalyze} days.\n💡 **Tip:** Make sure the bot has been running and storing messages, or try a shorter time period.`
-                });
+                let errorMessage = `❌ No messages found in ${analysisScope} for the last ${daysToAnalyze} days.\n\n`;
+                
+                if (!discordChannel) {
+                    errorMessage += `🚫 **Issue:** Cannot access channel object for Discord fallback.\n`;
+                } else {
+                    errorMessage += `🔍 **Checked:** Database and Discord API fallback.\n`;
+                }
+                
+                errorMessage += `💡 **Try:**\n`;
+                errorMessage += `• Use a shorter time period (1-2 days)\n`;
+                errorMessage += `• Ensure bot has "Read Message History" permission\n`;
+                errorMessage += `• Check bot logs for detailed error messages\n`;
+                errorMessage += `• Verify there are actually messages in this channel`;
+                
+                return interaction.editReply({ content: errorMessage });
             }
 
             logger.info(`Analyzing ${messages.length} messages from ${analysisScope} (${new Date(startTime).toISOString()} to now)`);
