@@ -191,11 +191,18 @@ module.exports = {
             if (analysis.actionItems && analysis.actionItems.length > 0) {
                 const actionEmbed = new EmbedBuilder()
                     .setTitle('🛠️ Developer Action Items')
-                    .setDescription('Prioritized implementation tasks based on the discussion:')
+                    .setDescription('Prioritized tasks based on actual user concerns:')
                     .setColor(0x3498DB);
 
                 const actionItemsText = analysis.actionItems
-                    .map((item, i) => `**${i + 1}.** ${item.task}\n   📌 Priority: ${item.priority || 'Normal'}\n   💡 *${item.reason || 'Derived from discussion'}*`)
+                    .map((item, i) => {
+                        let taskText = `**${i + 1}.** ${item.task}\n   📌 Priority: ${item.priority || 'Normal'}`;
+                        if (item.mentionedBy) {
+                            taskText += `\n   👤 Mentioned by: ${item.mentionedBy}`;
+                        }
+                        taskText += `\n   💡 *${item.reason || 'Derived from discussion'}*`;
+                        return taskText;
+                    })
                     .join('\n\n');
 
                 actionEmbed.addFields({
@@ -205,6 +212,46 @@ module.exports = {
                 });
 
                 embeds.push(actionEmbed);
+            }
+
+            // Specific player concerns embed
+            if (analysis.specificConcerns && analysis.specificConcerns.length > 0) {
+                const concernsEmbed = new EmbedBuilder()
+                    .setTitle('🎯 Player Concerns & Suggestions')
+                    .setDescription('Specific issues raised by community members:')
+                    .setColor(0xE67E22);
+
+                const concernsText = analysis.specificConcerns
+                    .map((concern, i) => `**${concern.user}:** ${concern.concern}\n   💡 *Suggested solution: ${concern.suggestedSolution}*`)
+                    .join('\n\n');
+
+                concernsEmbed.addFields({
+                    name: 'Player Feedback',
+                    value: concernsText.substring(0, 4096),
+                    inline: false
+                });
+
+                embeds.push(concernsEmbed);
+            }
+
+            // Direct player feedback embed
+            if (analysis.playerFeedback && analysis.playerFeedback.length > 0) {
+                const feedbackEmbed = new EmbedBuilder()
+                    .setTitle('💬 Direct Player Quotes')
+                    .setDescription('Key feedback from the discussion:')
+                    .setColor(0x9B59B6);
+
+                const feedbackText = analysis.playerFeedback
+                    .map((feedback, i) => `${i + 1}. "${feedback}"`)
+                    .join('\n');
+
+                feedbackEmbed.addFields({
+                    name: 'Player Voices',
+                    value: feedbackText.substring(0, 4096),
+                    inline: false
+                });
+
+                embeds.push(feedbackEmbed);
             }
 
             // Technical insights embed (if detailed mode)

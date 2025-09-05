@@ -1065,7 +1065,7 @@ async function analyzeChannelMessages(messages, context = {}) {
     const transcript = buildTranscript(messages);
     
     // Create detailed developer-focused prompt
-    const analysisPrompt = `You are an expert technical analyst and development consultant. Analyze the following chat discussion and provide actionable, developer-focused insights.
+    const analysisPrompt = `You are a developer analyst reviewing a Discord chat transcript. Extract SPECIFIC, ACTIONABLE insights from the ACTUAL conversation below.
 
 Context:
 - Scope: ${context.scope || 'Channel'}
@@ -1077,46 +1077,55 @@ Context:
 Chat Transcript:
 ${transcript}
 
-Provide a comprehensive analysis in the following JSON format:
+IMPORTANT: Base your analysis ONLY on what was actually discussed in the messages above. Use REAL usernames from the chat. Quote SPECIFIC suggestions and concerns mentioned by users.
+
+Provide analysis in this JSON format:
 {
-  "summary": "2-3 sentence executive summary of the discussion",
-  "keyTopics": ["array of 3-5 main topics discussed"],
-  "decisions": ["array of key decisions or consensus reached"],
+  "summary": "What was actually discussed based on the chat messages",
+  "keyTopics": ["Specific topics mentioned in the messages"],
+  "decisions": ["Actual decisions or agreements from the conversation, or 'No clear decisions reached' if none"],
   "actionItems": [
     {
-      "task": "specific development task",
-      "priority": "High/Medium/Low",
-      "reason": "why this is important"
+      "task": "Specific task mentioned by users or implied from their concerns",
+      "priority": "High/Medium/Low based on user urgency/importance",
+      "reason": "Quote or reference the actual user concern that led to this task",
+      "mentionedBy": "Username who suggested this or expressed the concern"
     }
   ],
   "technicalInsights": {
-    "technologies": ["technologies, frameworks, or tools mentioned"],
-    "patterns": ["design patterns or architectural decisions discussed"],
-    "suggestions": ["technical recommendations for implementation"]
+    "technologies": ["Only list if actual tech/tools were mentioned in chat"],
+    "patterns": ["Only if actual architecture/patterns were discussed"],
+    "suggestions": ["SPECIFIC technical suggestions users made, with quotes if possible"]
   },
   "productivityInsights": {
-    "blockers": ["identified obstacles or challenges"],
-    "improvements": ["process or workflow improvements suggested"],
-    "nextSteps": ["immediate next steps for the team"]
+    "blockers": ["Actual problems/blockers mentioned by users"],
+    "improvements": ["Specific process improvements users suggested"],
+    "nextSteps": ["Steps users actually proposed or that address their concerns"]
   },
   "participantHighlights": {
-    "username": "their key contribution or expertise area"
-  }
+    "actualUsername": "What they specifically contributed to the discussion"
+  },
+  "specificConcerns": [
+    {
+      "user": "actual username",
+      "concern": "direct quote or paraphrase of their specific issue",
+      "suggestedSolution": "any solution they proposed, or 'none suggested'"
+    }
+  ],
+  "playerFeedback": [
+    "Direct quotes or specific player complaints/suggestions from the chat"
+  ]
 }
 
-Focus on:
-1. Technical decisions and their implications
-2. Implementation details and code architecture
-3. Problems that need solving with concrete solutions
-4. Action items that developers can immediately work on
-5. Best practices and patterns that should be followed
-6. Dependencies, integrations, and technical requirements
-7. Performance, security, or scalability concerns
-8. Testing strategies and quality assurance needs
+RULES:
+- Use ONLY actual usernames from the transcript
+- Quote specific user concerns and suggestions 
+- If no technical discussion occurred, leave technical arrays empty
+- Focus on what users actually want changed or fixed
+- Identify specific player pain points mentioned
+- Don't invent generic responses - be specific to this conversation
 
-${context.detailed ? 'Include detailed technical analysis with specific implementation recommendations and potential code patterns.' : 'Provide concise, actionable insights.'}
-
-Return ONLY valid JSON, no additional text or markdown.`;
+Return ONLY valid JSON, no additional text.`;
 
     // Call LLM for analysis using dedicated analysis model
     const analysisModel = process.env.ANALYSIS_MODEL || process.env.SUMMARIZATION_MODEL || process.env.MODEL_NAME;
