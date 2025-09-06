@@ -1451,6 +1451,130 @@ Add stages manually with \`/task add-stage\`.`,
       const actionKey = parts.slice(0, 2).join('_');
       const id = parts.length >= 2 ? parts[1] : null;
       
+      // Handle admin task buttons
+      if (oldAction === 'admintask') {
+        const action = parts[1]; // complete, progress, reopen
+        const taskId = parts[2];
+        
+        // DEBUG: Log button interaction details
+        logger.info(`[ADMINTASK DEBUG] Button pressed: ${interaction.customId}`);
+        logger.info(`[ADMINTASK DEBUG] Parsed action: ${action}, taskId: ${taskId}`);
+        logger.info(`[ADMINTASK DEBUG] User: ${interaction.user.tag} (${interaction.user.id})`);
+        
+        try {
+          const db = require('./utils/db');
+          const task = db.prepare('SELECT * FROM admin_tasks WHERE task_id = ?').get(taskId);
+          
+          // DEBUG: Log task lookup result
+          if (task) {
+            logger.info(`[ADMINTASK DEBUG] Task found: ${task.title} (Status: ${task.status})`);
+          } else {
+            logger.error(`[ADMINTASK DEBUG] Task NOT found for ID: ${taskId}`);
+            // DEBUG: List all available tasks
+            const allTasks = db.prepare('SELECT task_id, title FROM admin_tasks').all();
+            logger.info(`[ADMINTASK DEBUG] Available tasks:`, allTasks);
+          }
+          
+          if (!task) {
+            return interaction.reply({ content: `Task not found. Task ID: ${taskId}`, ephemeral: true });
+          }
+          
+          const thread = await interaction.guild.channels.fetch(task.thread_id).catch(() => null);
+          let newStatus = task.status;
+          let statusEmoji = '';
+          let statusText = '';
+          
+          if (action === 'complete') {
+            newStatus = 'complete';
+            statusEmoji = '✅';
+            statusText = 'Complete';
+            // Lock the thread
+            if (thread && !thread.locked) {
+              await thread.setLocked(true, 'Task marked as complete');
+            }
+          } else if (action === 'progress') {
+            newStatus = 'in_progress';
+            statusEmoji = '🔄';
+            statusText = 'In Progress';
+            // Unlock the thread if locked
+            if (thread && thread.locked) {
+              await thread.setLocked(false, 'Task marked as in progress');
+            }
+          } else if (action === 'reopen') {
+            newStatus = 'in_progress';
+            statusEmoji = '🔓';
+            statusText = 'Reopened (In Progress)';
+            // Unlock and unarchive the thread
+            if (thread) {
+              if (thread.locked) await thread.setLocked(false, 'Task reopened');
+              if (thread.archived) await thread.setArchived(false, 'Task reopened');
+            }
+          }
+          
+          // DEBUG: Log status change
+          logger.info(`[ADMINTASK DEBUG] Changing status from '${task.status}' to '${newStatus}' for task ${taskId}`);
+          
+          // Update database
+          const updateResult = db.prepare('UPDATE admin_tasks SET status = ? WHERE task_id = ?').run(newStatus, taskId);
+          
+          // DEBUG: Log database update result
+          logger.info(`[ADMINTASK DEBUG] Database update result:`, updateResult);
+          
+          // Update the task embed
+          const assignees = db.prepare('SELECT user_id FROM admin_task_assignees WHERE task_id = ?')
+            .all(taskId)
+            .map(a => `<@${a.user_id}>`)
+            .join(', ');
+          
+          const color = newStatus === 'complete' ? 0x00FF00 : 0xFFA500;
+          
+          const embed = new EmbedBuilder()
+            .setTitle(task.title)
+            .setDescription(task.description)
+            .setColor(color)
+            .addFields(
+              { name: 'Status', value: `${statusEmoji} ${statusText}`, inline: true },
+              { name: 'Creator', value: `<@${task.creator_id}>`, inline: true },
+              { name: 'Assigned To', value: assignees || 'None', inline: false },
+              { name: 'Discussion Thread', value: `<#${task.thread_id}>`, inline: true }
+            )
+            .setFooter({ text: `Task ID: ${taskId}` })
+            .setTimestamp();
+          
+          // DEBUG: Log embed update
+          logger.info(`[ADMINTASK DEBUG] Updating task message embed with new status: ${statusText}`);
+          
+          // Update message
+          await interaction.message.edit({ embeds: [embed] });
+          
+          // Send confirmation
+          await interaction.reply({ 
+            content: `Task status updated to **${statusText}**`, 
+            ephemeral: true 
+          });
+          
+          // Post status update in thread
+          if (thread) {
+            logger.info(`[ADMINTASK DEBUG] Posting status update in thread ${thread.id}`);
+            await thread.send(`📌 Task status changed to **${statusText}** by <@${interaction.user.id}>`);
+          } else {
+            logger.warn(`[ADMINTASK DEBUG] Thread not found or accessible: ${task.thread_id}`);
+          }
+          
+          logger.info(`[ADMINTASK DEBUG] Task ${taskId} status successfully updated to ${newStatus}`);
+          
+        } catch (error) {
+          logger.error(`[ADMINTASK DEBUG] Error handling admin task button:`, error);
+          logger.error(`[ADMINTASK DEBUG] CustomId: ${interaction.customId}`);
+          logger.error(`[ADMINTASK DEBUG] Action: ${action}, TaskId: ${taskId}`);
+          return interaction.reply({ 
+            content: `Failed to update task status: ${error.message}\n\nDebug Info:\nCustomId: ${interaction.customId}\nTaskId: ${taskId}\nAction: ${action}`, 
+            ephemeral: true 
+          });
+        }
+        return;
+      }
+      
       if (oldAction === 'advance') {
         let id, stageIdx;
         

@@ -110,6 +110,26 @@ CREATE TABLE IF NOT EXISTS issues (
   created_at INTEGER NOT NULL,
   updated_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS admin_tasks (
+  task_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  creator_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT,
+  guild_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admin_task_assignees (
+  task_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  PRIMARY KEY(task_id, user_id),
+  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
+);
 `);
 // Export our file-based database implementation
 module.exports = db;

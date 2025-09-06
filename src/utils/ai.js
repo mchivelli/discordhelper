@@ -1182,33 +1182,20 @@ Return ONLY valid JSON.`;
       return generateFallbackAnalysis(messages, context);
     }
 
-    // Parse the JSON response - handle markdown code blocks
+    // Parse the JSON response
     let analysis;
-    let cleanResponse = response;
-    
-    // Remove markdown code blocks if present
-    if (response.includes('```')) {
-      const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (codeBlockMatch && codeBlockMatch[1]) {
-        cleanResponse = codeBlockMatch[1].trim();
-        console.log('[AI] Extracted JSON from markdown code block');
-      }
-    }
-    
     try {
-      analysis = JSON.parse(cleanResponse);
-      console.log('[AI] Successfully parsed JSON response');
+      analysis = JSON.parse(response);
     } catch (parseError) {
-      console.error('[AI] Failed to parse cleaned response as JSON:', parseError.message);
-      console.error('[AI] Cleaned response that failed to parse:', cleanResponse.substring(0, 200) + '...');
+      console.error('[AI] Failed to parse AI response as JSON:', parseError.message);
+      console.error('[AI] Raw response that failed to parse:', response);
       
       // Try to extract JSON from the response
-      const jsonMatch = cleanResponse.match(/\{[\s\S]*\}/);
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         console.log('[AI] Found JSON match, attempting to parse:', jsonMatch[0].substring(0, 100) + '...');
         try {
           analysis = JSON.parse(jsonMatch[0]);
-          console.log('[AI] Successfully parsed extracted JSON');
         } catch (secondError) {
           console.error('[AI] Second JSON parse failed:', secondError.message);
           return generateFallbackAnalysis(messages, context);
