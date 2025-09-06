@@ -141,7 +141,10 @@ client.on(Events.ClientReady, () => {
   }
   
   // Set up daily reminders
-  cron.schedule(process.env.REMINDER_CRON || '0 9 * * *', () => {
+  const cronExpression = process.env.REMINDER_CRON || '0 9 * * *';
+  if (cronExpression && cronExpression.trim()) {
+    try {
+      cron.schedule(cronExpression, () => {
     client.guilds.cache.forEach(guild => {
       let targetChannel = null;
 
@@ -182,10 +185,19 @@ client.on(Events.ClientReady, () => {
         logger.warn(`No suitable channel found for daily reminders in ${guild.name}`);
       }
     });
-  });
+      });
+    } catch (error) {
+      logger.error('Failed to set up daily reminders cron job:', error);
+    }
+  } else {
+    logger.warn('No valid REMINDER_CRON expression provided, skipping daily reminders');
+  }
 
   // Set up daily automatic chat summarization
-  cron.schedule(process.env.SUMMARY_CRON || '0 8 * * *', async () => {
+  const summaryCronExpression = process.env.SUMMARY_CRON || '0 8 * * *';
+  if (summaryCronExpression && summaryCronExpression.trim()) {
+    try {
+      cron.schedule(summaryCronExpression, async () => {
     logger.info('Starting daily automatic chat summarization...');
     
     for (const guild of client.guilds.cache.values()) {
@@ -284,7 +296,13 @@ client.on(Events.ClientReady, () => {
     }
     
     logger.info('Daily automatic chat summarization completed');
-  });
+      });
+    } catch (error) {
+      logger.error('Failed to set up daily chat summarization cron job:', error);
+    }
+  } else {
+    logger.warn('No valid SUMMARY_CRON expression provided, skipping daily chat summarization');
+  }
   
   logger.info('✅ Bot is ready to handle interactions - Chat summarization is active!');
   console.log('ClientReady handler completed');

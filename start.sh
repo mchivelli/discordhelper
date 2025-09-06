@@ -5,7 +5,9 @@ echo "Starting Discord Helper Bot..."
 # Source environment variables
 if [ -f .env ]; then
     echo "Loading environment variables..."
-    export $(cat .env | grep -v '#' | xargs)
+    set -a  # automatically export all variables
+    source .env
+    set +a  # stop automatically exporting
 fi
 
 # Ensure data directories exist with proper permissions
