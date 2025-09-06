@@ -810,7 +810,11 @@ function parseTableName(query) {
   const lowerQuery = query.toLowerCase();
   const tableNames = Object.keys(TABLES);
   
-  for (const table of tableNames) {
+  // Sort table names by length (longest first) to match more specific table names first
+  // This prevents 'tasks' from matching when we want 'admin_tasks'
+  const sortedTableNames = tableNames.sort((a, b) => b.length - a.length);
+  
+  for (const table of sortedTableNames) {
     if (lowerQuery.includes(table)) {
       return table;
     }

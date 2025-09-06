@@ -12,6 +12,13 @@ RUN apt-get update && apt-get install -y \
 # Create data directory with proper permissions
 RUN mkdir -p /app/data && chown -R node:node /app/data
 
+# Create all table subdirectories with proper permissions
+RUN mkdir -p /app/data/tasks /app/data/stages /app/data/task_suggestions \
+    /app/data/bot_settings /app/data/announcements /app/data/changelogs \
+    /app/data/chat_messages /app/data/chat_summaries /app/data/issues \
+    /app/data/admin_tasks /app/data/admin_task_assignees \
+    && chown -R node:node /app/data
+
 # Copy package files
 COPY package*.json ./
 

@@ -79,10 +79,22 @@ module.exports = {
     
     if (focusedOption.name === 'task_id') {
       const tasks = db.prepare('SELECT task_id, title FROM admin_tasks ORDER BY created_at DESC LIMIT 25').all();
-      const choices = tasks.map(task => ({
+      
+      // Filter out invalid entries and ensure we have valid choices
+      const validTasks = tasks.filter(task => task && task.task_id && task.title);
+      
+      const choices = validTasks.map(task => ({
         name: `${task.task_id}: ${task.title}`.substring(0, 100),
         value: task.task_id
       }));
+      
+      // If no valid tasks, provide a helpful message
+      if (choices.length === 0) {
+        choices.push({
+          name: 'No admin tasks found',
+          value: 'no_tasks_found'
+        });
+      }
       
       return interaction.respond(choices);
     }
