@@ -1,4 +1,25 @@
-#!/bin/sh
+#!/bin/bash
+
+echo "Starting Discord Helper Bot..."
+
+# Source environment variables
+if [ -f .env ]; then
+    echo "Loading environment variables..."
+    export $(cat .env | grep -v '#' | xargs)
+fi
+
+# Ensure data directories exist with proper permissions
+echo "Setting up data directories..."
+mkdir -p data/tasks data/stages data/task_suggestions \
+         data/bot_settings data/announcements data/changelogs \
+         data/chat_messages data/chat_summaries data/issues \
+         data/admin_tasks data/admin_task_assignees
+
+# Fix permissions for all data directories
+echo "Fixing data directory permissions..."
+chown -R $(id -u):$(id -g) data/
+chmod -R 755 data/
+
 # Production startup script for Discord Task Bot
 # This ensures all prerequisites are met before starting the bot
 
@@ -8,7 +29,7 @@ echo "$(date) - Starting initialization"
 
 # Check for required environment variables
 if [ -z "$DISCORD_TOKEN" ]; then
-  echo "❌ ERROR: DISCORD_TOKEN environment variable is not set"
+  echo " ERROR: DISCORD_TOKEN environment variable is not set"
   exit 1
 fi
 
@@ -17,7 +38,7 @@ DB_DIR="$(dirname "${DB_PATH:-./data/database.sqlite}")"
 echo "Setting up database directory: $DB_DIR"
 mkdir -p "$DB_DIR"
 chmod -R 755 "$DB_DIR" 2>/dev/null || true
-echo "✅ Database directory setup complete"
+echo " Database directory setup complete"
 
 # Initialize database if it doesn't exist
 DB_FILE="${DB_PATH:-./data/database.sqlite}"

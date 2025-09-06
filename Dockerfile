@@ -32,7 +32,7 @@ COPY . .
 RUN chmod +x start.sh
 
 # Use non-root user for security
-USER node
+# USER node  # Temporarily run as root to fix permissions
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -42,5 +42,5 @@ ENV DB_PATH=/app/data/database.sqlite
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:${HEALTH_PORT:-3000}/health || exit 1
 
-# Run bot directly - startup checks are handled in the application
-CMD ["node", "src/index.js"]
+# Run bot with startup script to ensure proper permissions
+CMD ["./start.sh"]
