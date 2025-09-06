@@ -24,7 +24,9 @@ const TABLES = {
   changelogs: path.join(DB_ROOT, 'changelogs'),
   chat_messages: path.join(DB_ROOT, 'chat_messages'),
   chat_summaries: path.join(DB_ROOT, 'chat_summaries'),
-  issues: path.join(DB_ROOT, 'issues')
+  issues: path.join(DB_ROOT, 'issues'),
+  admin_tasks: path.join(DB_ROOT, 'admin_tasks'),
+  admin_task_assignees: path.join(DB_ROOT, 'admin_task_assignees')
 };
 
 // Ensure all table directories exist
@@ -40,7 +42,9 @@ const cache = {
   changelogs: new Map(),
   chat_messages: new Map(),
   chat_summaries: new Map(),
-  issues: new Map()
+  issues: new Map(),
+  admin_tasks: new Map(),
+  admin_task_assignees: new Map()
 };
 
 /**
@@ -253,8 +257,8 @@ class QueryBuilder {
       console.log(`DEBUG: Executing query: ${this.query}`);
       console.log(`DEBUG: Query params:`, params);
       let filtered = items.filter(item => item.task_id === params[0]);
-      console.log(`DEBUG: Initial filtered stages for taskId ${params[0]}:`, filtered.length);
-      console.log(`DEBUG: All items in stages table:`, items.length);
+      console.log(`DEBUG: Initial filtered ${this.tableName} for taskId ${params[0]}:`, filtered.length);
+      console.log(`DEBUG: All items in ${this.tableName} table:`, items.length);
       
       // Apply done=0 filter if present
       if (this.query.toLowerCase().includes('and done = 0') || this.query.toLowerCase().includes('and done=0')) {
@@ -347,7 +351,7 @@ class QueryBuilder {
       let filtered = items;
       
       if (this.query.toLowerCase().includes('task_id =') || this.query.toLowerCase().includes('task_id=')) {
-        console.log(`DEBUG: all() - Filtering by task_id = ${params[0]}`);
+        console.log(`DEBUG: all() - Filtering ${this.tableName} by task_id = ${params[0]}`);
         console.log(`DEBUG: all() - Before filtering:`, items.map(item => ({id: item.id, task_id: item.task_id})));
         filtered = items.filter(item => item.task_id === params[0]);
         console.log(`DEBUG: all() - After filtering to ${filtered.length} items:`, filtered.map(item => ({id: item.id, task_id: item.task_id})));
@@ -539,6 +543,35 @@ class QueryBuilder {
             };
           }
           break;
+        case 'admin_tasks':
+          // Positional: task_id, title, description, status, creator_id, thread_id, channel_id, message_id, guild_id, created_at
+          if (args.length >= 6) {
+            item = {
+              id: args[0], // Use task_id as id
+              task_id: args[0],
+              title: args[1],
+              description: args[2],
+              status: args[3] || 'in_progress',
+              creator_id: args[4],
+              thread_id: args[5],
+              channel_id: args[6],
+              message_id: args[7] || null,
+              guild_id: args[8],
+              created_at: args[9] || Date.now()
+            };
+          }
+          break;
+        case 'admin_task_assignees':
+          // Positional: task_id, user_id
+          if (args.length >= 2) {
+            const compositeId = `${args[0]}_${args[1]}`;
+            item = {
+              id: compositeId,
+              task_id: args[0],
+              user_id: args[1]
+            };
+          }
+          break;
       }
     }
     
@@ -565,7 +598,9 @@ class QueryBuilder {
       const taskId = args[0];
       items.forEach(item => {
         if (item.task_id === taskId) {
-          deleteItem(this.tableName, item.id);
+          // For admin_task_assignees, use composite ID format
+          const itemId = this.tableName === 'admin_task_assignees' ? item.id : item.id;
+          deleteItem(this.tableName, itemId);
           deletedCount++;
         }
       });
@@ -693,12 +728,31 @@ class QueryBuilder {
         console.log(`DEBUG: No stage found with taskId=${taskId} and idx=${idx}`);
         console.log(`DEBUG: Available stages:`, items.filter(i => i.task_id === taskId));
       }
-    } else if (this.query.toLowerCase().includes('set status =') && (this.query.toLowerCase().includes('where rowid =') || this.query.toLowerCase().includes('where id ='))) {
+    } else if (this.query.toLowerCase().includes('set status =') && (this.query.toLowerCase().includes('where rowid =') || this.query.toLowerCase().includes('where id =') || this.query.toLowerCase().includes('where task_id ='))) {
       const status = args[0];
       const id = args[1];
-      const item = items.find(i => i.id == id);
+      let item;
+      
+      if (this.query.toLowerCase().includes('where task_id =')) {
+        // For admin_tasks table: UPDATE admin_tasks SET status = ? WHERE task_id = ?
+        item = items.find(i => i.task_id === id);
+      } else {
+        // For other tables: WHERE id = ? or WHERE rowid = ?
+        item = items.find(i => i.id == id);
+      }
+      
       if (item) {
         item.status = status;
+        saveItem(this.tableName, item);
+        updatedCount = 1;
+      }
+    } else if (this.query.toLowerCase().includes('set message_id =') && this.query.toLowerCase().includes('where task_id =')) {
+      // Handle: UPDATE admin_tasks SET message_id = ? WHERE task_id = ?
+      const messageId = args[0];
+      const taskId = args[1];
+      const item = items.find(i => i.task_id === taskId);
+      if (item) {
+        item.message_id = messageId;
         saveItem(this.tableName, item);
         updatedCount = 1;
       }
