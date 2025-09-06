@@ -865,6 +865,118 @@ View with \`/task list id:${taskId}\`.`
       const customIdParts = interaction.customId.split('_');
       const buttonAction = customIdParts[0];
       let handledByFirstHandler = false;
+    
+    // Handle admin task buttons
+    if (['admintask'].includes(buttonAction)) {
+      handledByFirstHandler = true;
+      try {
+        const action = customIdParts[1]; // complete | progress | reopen
+        const taskId = customIdParts.slice(2).join('_');
+        const db = require('./utils/db');
+        const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+
+        // Get task from database
+        const task = db.prepare('SELECT * FROM admin_tasks WHERE task_id = ?').get(taskId);
+        if (!task) {
+          return interaction.reply({ content: '❌ Task not found.', ephemeral: true });
+        }
+
+        // Get assignees
+        const assignees = db.prepare('SELECT user_id FROM admin_task_assignees WHERE task_id = ?').all(taskId);
+        const assigneeList = assignees.map(a => `<@${a.user_id}>`).join(', ');
+
+        let newStatus = task.status;
+        let statusEmoji = '🔄';
+        let statusText = 'In Progress';
+        let embedColor = 0xFFA500; // Orange
+
+        if (action === 'complete') {
+          newStatus = 'complete';
+          statusEmoji = '✅';
+          statusText = 'Complete';
+          embedColor = 0x00FF00; // Green
+        } else if (action === 'progress') {
+          newStatus = 'in_progress';
+          statusEmoji = '🔄';
+          statusText = 'In Progress';
+          embedColor = 0xFFA500; // Orange
+        } else if (action === 'reopen') {
+          newStatus = 'in_progress';
+          statusEmoji = '🔄';
+          statusText = 'In Progress';
+          embedColor = 0xFFA500; // Orange
+        }
+
+        // Update status in database
+        db.prepare('UPDATE admin_tasks SET status = ? WHERE task_id = ?').run(newStatus, taskId);
+
+        // Format date
+        const date = new Date(task.created_at);
+        const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+
+        // Update embed
+        const embed = new EmbedBuilder()
+          .setTitle(task.title)
+          .setDescription(task.description)
+          .setColor(embedColor)
+          .addFields(
+            { name: 'Status', value: `${statusEmoji} ${statusText}`, inline: true },
+            { name: 'Creator', value: `<@${task.creator_id}>`, inline: true },
+            { name: 'Assigned To', value: assigneeList || 'None', inline: false },
+            { name: 'Discussion Thread', value: `<#${task.thread_id}>`, inline: true }
+          )
+          .setFooter({ text: `Task ID: ${taskId} • ${dateStr}` })
+          .setTimestamp();
+
+        // Create action buttons
+        const actionRow = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(`admintask_complete_${taskId}`)
+              .setLabel('Mark Complete')
+              .setStyle(ButtonStyle.Success)
+              .setEmoji('✅'),
+            new ButtonBuilder()
+              .setCustomId(`admintask_progress_${taskId}`)
+              .setLabel('Mark In Progress')
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji('🔄'),
+            new ButtonBuilder()
+              .setCustomId(`admintask_reopen_${taskId}`)
+              .setLabel('Reopen')
+              .setStyle(ButtonStyle.Secondary)
+              .setEmoji('🔓')
+          );
+
+        // Update the message
+        await interaction.update({ embeds: [embed], components: [actionRow] });
+
+        // Post status update in thread
+        if (task.thread_id) {
+          try {
+            const thread = await interaction.guild.channels.fetch(task.thread_id);
+            if (thread) {
+              const statusUpdate = `📋 **Task Status Updated**\n` +
+                `${statusEmoji} Status changed to: **${statusText}**\n` +
+                `Updated by: <@${interaction.user.id}>`;
+              await thread.send(statusUpdate);
+            }
+          } catch (error) {
+            console.warn('Could not post status update to thread:', error);
+          }
+        }
+
+      } catch (error) {
+        console.error('Error handling admin task button:', error);
+        if (interaction.deferred || interaction.replied) {
+          await interaction.followUp({ content: '❌ Error updating task status.', ephemeral: true });
+        } else {
+          await interaction.reply({ content: '❌ Error updating task status.', ephemeral: true });
+        }
+      }
+      return;
+    }
+    
     // Handle issue buttons
     if (['issue'].includes(buttonAction)) {
       handledByFirstHandler = true;

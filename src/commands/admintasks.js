@@ -140,23 +140,15 @@ module.exports = {
       const timestamp = Date.now();
       const taskId = `task-${timestamp}`;
       
-      // Create thread in To-Do channel
-      const thread = await todoChannel.threads.create({
-        name: `Task: ${title}`,
-        autoArchiveDuration: 10080, // 7 days
-        type: ChannelType.PublicThread,
-        reason: `Admin task created by ${interaction.user.tag}`
-      });
-
-      // Store task in database
+      // Store task in database first (without thread_id)
       db.prepare(`
         INSERT INTO admin_tasks (
           task_id, title, description, status, creator_id, 
-          thread_id, channel_id, guild_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          channel_id, guild_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         taskId, title, description, 'in_progress', interaction.user.id,
-        thread.id, TODO_CHANNEL_ID, interaction.guildId, timestamp
+        TODO_CHANNEL_ID, interaction.guildId, timestamp
       );
 
       // Store assignees
@@ -169,7 +161,7 @@ module.exports = {
       const date = new Date(timestamp);
       const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
-      // Create task embed
+      // Create task embed (without thread link initially)
       const embed = new EmbedBuilder()
         .setTitle(title)
         .setDescription(description)
@@ -177,8 +169,7 @@ module.exports = {
         .addFields(
           { name: 'Status', value: '🔄 In Progress', inline: true },
           { name: 'Creator', value: `<@${interaction.user.id}>`, inline: true },
-          { name: 'Assigned To', value: assignees.map(u => `<@${u.id}>`).join(', '), inline: false },
-          { name: 'Discussion Thread', value: `<#${thread.id}>`, inline: true }
+          { name: 'Assigned To', value: assignees.map(u => `<@${u.id}>`).join(', '), inline: false }
         )
         .setFooter({ text: `Task ID: ${taskId} • ${dateStr}` })
         .setTimestamp();
@@ -203,11 +194,23 @@ module.exports = {
             .setEmoji('🔓')
         );
 
-      // Send the task message in the thread
-      const taskMessage = await thread.send({ embeds: [embed], components: [actionRow] });
+      // Send the task message in the main channel
+      const taskMessage = await todoChannel.send({ embeds: [embed], components: [actionRow] });
 
-      // Pin the task message
-      await taskMessage.pin().catch(() => {});
+      // Create thread under the task message
+      const thread = await taskMessage.startThread({
+        name: `Task: ${title}`,
+        autoArchiveDuration: 10080, // 7 days
+        reason: `Admin task thread created by ${interaction.user.tag}`
+      });
+
+      // Update the embed to include the thread link
+      embed.addFields({ name: 'Discussion Thread', value: `<#${thread.id}>`, inline: true });
+      await taskMessage.edit({ embeds: [embed], components: [actionRow] });
+
+      // Update database with thread_id
+      db.prepare('UPDATE admin_tasks SET thread_id = ? WHERE task_id = ?')
+        .run(thread.id, taskId);
 
       // Store message ID
       db.prepare('UPDATE admin_tasks SET message_id = ? WHERE task_id = ?')
