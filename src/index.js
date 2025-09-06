@@ -969,11 +969,11 @@ View with \`/task list id:${taskId}\`.`
         // Update the message
         await interaction.update({ embeds: [embed], components: [actionRow] });
 
-        // Post status update in thread
+        // Post status update in thread only (not in main channel)
         if (task.thread_id) {
           try {
             const thread = await interaction.guild.channels.fetch(task.thread_id);
-            if (thread) {
+            if (thread && thread.isThread()) {
               const statusUpdate = `📋 **Task Status Updated**\n` +
                 `${statusEmoji} Status changed to: **${statusText}**\n` +
                 `Updated by: <@${interaction.user.id}>`;
