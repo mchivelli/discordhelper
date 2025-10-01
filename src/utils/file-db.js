@@ -26,7 +26,8 @@ const TABLES = {
   chat_summaries: path.join(DB_ROOT, 'chat_summaries'),
   issues: path.join(DB_ROOT, 'issues'),
   admin_tasks: path.join(DB_ROOT, 'admin_tasks'),
-  admin_task_assignees: path.join(DB_ROOT, 'admin_task_assignees')
+  admin_task_assignees: path.join(DB_ROOT, 'admin_task_assignees'),
+  simple_tasks: path.join(DB_ROOT, 'simple_tasks')
 };
 
 // Ensure all table directories exist
@@ -44,7 +45,8 @@ const cache = {
   chat_summaries: new Map(),
   issues: new Map(),
   admin_tasks: new Map(),
-  admin_task_assignees: new Map()
+  admin_task_assignees: new Map(),
+  simple_tasks: new Map()
 };
 
 /**
@@ -572,6 +574,23 @@ class QueryBuilder {
             };
           }
           break;
+        case 'simple_tasks':
+          if (args.length >= 11) {
+            item = {
+              id: args[0],
+              title: args[1],
+              description: args[2] || '',
+              assignee_ids: args[3] || '[]',
+              creator_id: args[4],
+              guild_id: args[5],
+              status: args[6] || 'pending',
+              completed_at: args[7] || null,
+              created_at: args[8] || Date.now(),
+              message_id: args[9] || null,
+              channel_id: args[10] || null
+            };
+          }
+          break;
       }
     }
     
@@ -765,6 +784,40 @@ class QueryBuilder {
         saveItem(this.tableName, item);
         updatedCount = 1;
       }
+    } else if (this.tableName === 'simple_tasks' && this.query.toLowerCase().includes('set status =') && this.query.toLowerCase().includes('completed_at =')) {
+      // Handle: UPDATE simple_tasks SET status = ?, completed_at = ? WHERE id = ?
+      const status = args[0];
+      const completed_at = args[1];
+      const id = args[2];
+      const item = items.find(i => i.id === id);
+      if (item) {
+        item.status = status;
+        item.completed_at = completed_at;
+        saveItem(this.tableName, item);
+        updatedCount = 1;
+      }
+    } else if (this.tableName === 'simple_tasks' && this.query.toLowerCase().includes('set assignee_ids =')) {
+      // Handle: UPDATE simple_tasks SET assignee_ids = ? WHERE id = ?
+      const assignee_ids = args[0];
+      const id = args[1];
+      const item = items.find(i => i.id === id);
+      if (item) {
+        item.assignee_ids = assignee_ids;
+        saveItem(this.tableName, item);
+        updatedCount = 1;
+      }
+    } else if (this.tableName === 'simple_tasks' && this.query.toLowerCase().includes('set message_id =') && this.query.toLowerCase().includes('channel_id =')) {
+      // Handle: UPDATE simple_tasks SET message_id = ?, channel_id = ? WHERE id = ?
+      const message_id = args[0];
+      const channel_id = args[1];
+      const id = args[2];
+      const item = items.find(i => i.id === id);
+      if (item) {
+        item.message_id = message_id;
+        item.channel_id = channel_id;
+        saveItem(this.tableName, item);
+        updatedCount = 1;
+      }
     }
     
     return { changes: updatedCount };
@@ -810,12 +863,14 @@ function parseTableName(query) {
   const lowerQuery = query.toLowerCase();
   const tableNames = Object.keys(TABLES);
   
-  // Sort table names by length (longest first) to match more specific table names first
-  // This prevents 'tasks' from matching when we want 'admin_tasks'
+  // Sort table names by length (descending) to avoid substring collisions
+  // e.g., check 'admin_tasks' and 'simple_tasks' before 'tasks' to avoid mismatches
   const sortedTableNames = tableNames.sort((a, b) => b.length - a.length);
   
   for (const table of sortedTableNames) {
-    if (lowerQuery.includes(table)) {
+    // Use word boundaries to match complete table names
+    const regex = new RegExp(`\\b${table}\\b`, 'i');
+    if (regex.test(lowerQuery)) {
       return table;
     }
   }

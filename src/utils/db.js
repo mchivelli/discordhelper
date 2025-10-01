@@ -130,6 +130,20 @@ CREATE TABLE IF NOT EXISTS admin_task_assignees (
   PRIMARY KEY(task_id, user_id),
   FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS simple_tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  assignee_ids TEXT DEFAULT '[]',
+  creator_id TEXT NOT NULL,
+  guild_id TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  completed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  message_id TEXT,
+  channel_id TEXT
+);
 `);
 // Export our file-based database implementation
 module.exports = db;

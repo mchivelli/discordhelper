@@ -2141,6 +2141,207 @@ Add stages manually with \`/task add-stage\`.`,
         }
         return;
       }
+      
+      // Handle simple_tasks (admintasks) button interactions
+      else if (oldAction === 'st') {
+        const stAction = parts[1]; // complete, assign, details, list
+        const taskId = parts[2];
+        
+        try {
+          // Handle complete button
+          if (stAction === 'complete') {
+            // Get the task
+            const task = db.prepare('SELECT * FROM simple_tasks WHERE id = ?').get(taskId);
+            
+            if (!task) {
+              await interaction.reply({ content: '❌ Task not found.', ephemeral: true });
+              return;
+            }
+            
+            // Verify this button is on the correct message (safety check)
+            if (interaction.message && task.message_id && interaction.message.id !== task.message_id) {
+              logger.warn(`Button message ID mismatch: button on ${interaction.message.id}, task stored ${task.message_id}`);
+              // Continue anyway, but log the mismatch
+            }
+            
+            // Check permissions: admin, creator, or assignee
+            const assigneeIds = JSON.parse(task.assignee_ids || '[]');
+            const isAdmin = interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator);
+            const isCreator = task.creator_id === interaction.user.id;
+            const isAssignee = assigneeIds.includes(interaction.user.id);
+            
+            if (!isAdmin && !isCreator && !isAssignee) {
+              await interaction.reply({ 
+                content: '⛔ You do not have permission to complete this task.', 
+                ephemeral: true 
+              });
+              return;
+            }
+            
+            logger.info(`Admin task ${taskId} being completed by ${interaction.user.tag} (admin:${isAdmin}, creator:${isCreator}, assignee:${isAssignee})`);
+            
+            // Mark as completed
+            db.prepare('UPDATE simple_tasks SET status = ?, completed_at = ? WHERE id = ?')
+              .run('completed', Date.now(), taskId);
+            
+            // Update the message with collapsed format
+            const updatedTask = db.prepare('SELECT * FROM simple_tasks WHERE id = ?').get(taskId);
+            const admintasksCommand = client.commands.get('admintasks');
+            
+            if (admintasksCommand && interaction.message) {
+              const collapsedEmbed = admintasksCommand.createTaskEmbed(updatedTask);
+              const collapsedButtons = admintasksCommand.createTaskButtons(updatedTask);
+              
+              logger.info(`Updating message ${interaction.message.id} with collapsed format for task ${taskId}`);
+              
+              await interaction.update({
+                embeds: [collapsedEmbed],
+                components: collapsedButtons
+              });
+              
+              logger.info(`Admin task ${taskId} successfully completed and collapsed by ${interaction.user.tag}`);
+            } else {
+              logger.warn(`Could not update message for task ${taskId} - command or message not found`);
+              await interaction.reply({ content: '✅ Task marked as complete!', ephemeral: true });
+            }
+            
+            return;
+          }
+          
+          // Handle self-assign button
+          else if (stAction === 'assign') {
+            // Get the task
+            const task = db.prepare('SELECT * FROM simple_tasks WHERE id = ?').get(taskId);
+            
+            if (!task) {
+              await interaction.reply({ content: '❌ Task not found.', ephemeral: true });
+              return;
+            }
+            
+            // Verify this button is on the correct message (safety check)
+            if (interaction.message && task.message_id && interaction.message.id !== task.message_id) {
+              logger.warn(`Button message ID mismatch: button on ${interaction.message.id}, task stored ${task.message_id}`);
+              // Continue anyway, but log the mismatch
+            }
+            
+            // Add user to assignee_ids
+            const assigneeIds = JSON.parse(task.assignee_ids || '[]');
+            
+            if (assigneeIds.includes(interaction.user.id)) {
+              await interaction.reply({ 
+                content: '⚠️ You are already assigned to this task.', 
+                ephemeral: true 
+              });
+              return;
+            }
+            
+            logger.info(`User ${interaction.user.tag} self-assigning to task ${taskId}`);
+            
+            assigneeIds.push(interaction.user.id);
+            db.prepare('UPDATE simple_tasks SET assignee_ids = ? WHERE id = ?')
+              .run(JSON.stringify(assigneeIds), taskId);
+            
+            // Update the message with new buttons
+            const updatedTask = db.prepare('SELECT * FROM simple_tasks WHERE id = ?').get(taskId);
+            const admintasksCommand = client.commands.get('admintasks');
+            
+            if (admintasksCommand && interaction.message) {
+              const updatedEmbed = admintasksCommand.createTaskEmbed(updatedTask);
+              const updatedButtons = admintasksCommand.createTaskButtons(updatedTask);
+              
+              logger.info(`Updating message ${interaction.message.id} with new assignee for task ${taskId}`);
+              
+              await interaction.update({
+                embeds: [updatedEmbed],
+                components: updatedButtons
+              });
+              
+              logger.info(`Admin task ${taskId} successfully self-assigned by ${interaction.user.tag}`);
+            } else {
+              logger.warn(`Could not update message for task ${taskId} - command or message not found`);
+              await interaction.reply({ content: '✅ Task assigned to you!', ephemeral: true });
+            }
+            
+            return;
+          }
+          
+          // Handle details button
+          else if (stAction === 'details') {
+            const task = db.prepare('SELECT * FROM simple_tasks WHERE id = ?').get(taskId);
+            
+            if (!task) {
+              await interaction.reply({ content: '❌ Task not found.', ephemeral: true });
+              return;
+            }
+            
+            const assigneeIds = JSON.parse(task.assignee_ids || '[]');
+            const assigneeText = assigneeIds.length > 0 
+              ? assigneeIds.map(id => `<@${id}>`).join(', ')
+              : '_Unassigned_';
+            
+            const detailsEmbed = new EmbedBuilder()
+              .setTitle(`📋 ${task.title}`)
+              .setDescription(task.description || '_No description_')
+              .setColor(task.status === 'completed' ? 0x2ecc71 : 0x3498db)
+              .addFields(
+                { name: '👤 Assigned To', value: assigneeText, inline: true },
+                { name: '📊 Status', value: task.status, inline: true },
+                { name: '👨‍💼 Creator', value: `<@${task.creator_id}>`, inline: true },
+                { name: '📅 Created', value: new Date(task.created_at).toLocaleString(), inline: true }
+              )
+              .setFooter({ text: `Task ID: ${task.id}` });
+            
+            if (task.completed_at) {
+              detailsEmbed.addFields({
+                name: '✅ Completed',
+                value: new Date(task.completed_at).toLocaleString(),
+                inline: true
+              });
+            }
+            
+            await interaction.reply({ embeds: [detailsEmbed], ephemeral: true });
+            return;
+          }
+          
+          // Handle list pagination buttons
+          else if (stAction === 'list') {
+            const page = parseInt(taskId); // In this case, taskId is actually the page number
+            
+            if (isNaN(page)) {
+              await interaction.reply({ content: '❌ Invalid page number.', ephemeral: true });
+              return;
+            }
+            
+            const admintasksCommand = client.commands.get('admintasks');
+            if (!admintasksCommand) {
+              await interaction.reply({ content: '❌ Command not available.', ephemeral: true });
+              return;
+            }
+            
+            // Create a mock interaction object with the page option
+            const mockInteraction = {
+              ...interaction,
+              options: {
+                getInteger: (name) => name === 'page' ? page : null,
+                getSubcommand: () => 'list'
+              },
+              guildId: interaction.guildId,
+              editReply: interaction.update.bind(interaction),
+              deferReply: async () => {} // No-op since we'll use update
+            };
+            
+            await admintasksCommand.handleList(mockInteraction);
+            return;
+          }
+        } catch (error) {
+          logger.error(`Error handling simple_tasks button (${stAction}):`, error);
+          await interaction.reply({ 
+            content: `An error occurred: ${error.message}`, 
+            ephemeral: true 
+          });
+        }
+        return;
+      }
     }
   } catch (err) {
     console.error('Interaction error:', err);
