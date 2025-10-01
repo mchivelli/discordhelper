@@ -25,8 +25,8 @@ module.exports = {
             .setMaxLength(1000))
         .addUserOption(o =>
           o.setName('assignee1')
-            .setDescription('First admin to assign this task to')
-            .setRequired(true))
+            .setDescription('First admin to assign this task to (leave empty for unassigned)')
+            .setRequired(false))
         .addUserOption(o =>
           o.setName('assignee2')
             .setDescription('Second admin to assign (optional)')
@@ -135,6 +135,8 @@ module.exports = {
         const user = interaction.options.getUser(`assignee${i}`);
         if (user) assignees.push(user);
       }
+      
+      const isUnassigned = assignees.length === 0;
 
       // Generate task ID
       const timestamp = Date.now();
@@ -165,18 +167,28 @@ module.exports = {
       const embed = new EmbedBuilder()
         .setTitle(title)
         .setDescription(description)
-        .setColor(0xFFA500) // Orange for in progress
+        .setColor(isUnassigned ? 0x808080 : 0xFFA500) // Gray for unassigned, Orange for in progress
         .addFields(
-          { name: 'Status', value: '🔄 In Progress', inline: true },
+          { name: 'Status', value: isUnassigned ? '⏳ Unassigned' : '🔄 In Progress', inline: true },
           { name: 'Creator', value: `<@${interaction.user.id}>`, inline: true },
-          { name: 'Assigned To', value: assignees.map(u => `<@${u.id}>`).join(', '), inline: false }
+          { name: 'Assigned To', value: isUnassigned ? '❓ Unclaimed - Click "Claim Task" to assign yourself' : assignees.map(u => `<@${u.id}>`).join(', '), inline: false }
         )
         .setFooter({ text: `Task ID: ${taskId} • ${dateStr}` })
         .setTimestamp();
 
-      // Create action buttons
-      const actionRow = new ActionRowBuilder()
-        .addComponents(
+      // Create action buttons based on whether task is assigned
+      const actionRow = new ActionRowBuilder();
+      
+      if (isUnassigned) {
+        actionRow.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`admintask_claim_${taskId}`)
+            .setLabel('Claim Task')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('✋')
+        );
+      } else {
+        actionRow.addComponents(
           new ButtonBuilder()
             .setCustomId(`admintask_complete_${taskId}`)
             .setLabel('Mark Complete')
@@ -193,6 +205,7 @@ module.exports = {
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('🔓')
         );
+      }
 
       // Send the task message in the main channel
       const taskMessage = await todoChannel.send({ embeds: [embed], components: [actionRow] });

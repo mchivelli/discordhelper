@@ -888,7 +888,7 @@ View with \`/task list id:${taskId}\`.`
     if (['admintask'].includes(buttonAction)) {
       handledByFirstHandler = true;
       try {
-        const action = customIdParts[1]; // complete | progress | reopen
+        const action = customIdParts[1]; // complete | progress | reopen | claim
         const taskId = customIdParts.slice(2).join('_');
         const db = require('./utils/db');
         const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
@@ -897,6 +897,81 @@ View with \`/task list id:${taskId}\`.`
         const task = db.prepare('SELECT * FROM admin_tasks WHERE task_id = ?').get(taskId);
         if (!task) {
           return interaction.reply({ content: '❌ Task not found.', ephemeral: true });
+        }
+
+        // Handle CLAIM action separately
+        if (action === 'claim') {
+          // Check if user is an admin
+          if (!interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) {
+            return interaction.reply({ content: '❌ Only administrators can claim tasks.', ephemeral: true });
+          }
+
+          // Add user as assignee
+          db.prepare('INSERT INTO admin_task_assignees (task_id, user_id) VALUES (?, ?)')
+            .run(taskId, interaction.user.id);
+
+          // Update task to in_progress status
+          db.prepare('UPDATE admin_tasks SET status = ? WHERE task_id = ?')
+            .run('in_progress', taskId);
+
+          // Format date
+          const date = new Date(task.created_at);
+          const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+
+          // Get all assignees (including the new one)
+          const assignees = db.prepare('SELECT user_id FROM admin_task_assignees WHERE task_id = ?').all(taskId);
+          const assigneeList = assignees.map(a => `<@${a.user_id}>`).join(', ');
+
+          // Create updated embed
+          const embed = new EmbedBuilder()
+            .setTitle(task.title)
+            .setDescription(task.description)
+            .setColor(0xFFA500) // Orange for in progress
+            .addFields(
+              { name: 'Status', value: '🔄 In Progress', inline: true },
+              { name: 'Creator', value: `<@${task.creator_id}>`, inline: true },
+              { name: 'Assigned To', value: assigneeList, inline: false },
+              { name: 'Discussion Thread', value: `<#${task.thread_id}>`, inline: true }
+            )
+            .setFooter({ text: `Task ID: ${taskId} • ${dateStr}` })
+            .setTimestamp();
+
+          // Create regular action buttons
+          const actionRow = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`admintask_complete_${taskId}`)
+                .setLabel('Mark Complete')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅'),
+              new ButtonBuilder()
+                .setCustomId(`admintask_progress_${taskId}`)
+                .setLabel('Mark In Progress')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🔄'),
+              new ButtonBuilder()
+                .setCustomId(`admintask_reopen_${taskId}`)
+                .setLabel('Reopen')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('🔓')
+            );
+
+          // Update the message
+          await interaction.update({ embeds: [embed], components: [actionRow] });
+
+          // Post in thread
+          if (task.thread_id) {
+            try {
+              const thread = await interaction.guild.channels.fetch(task.thread_id);
+              if (thread && thread.isThread()) {
+                await thread.send(`✋ **Task Claimed**\n<@${interaction.user.id}> has claimed this task and will work on it.`);
+              }
+            } catch (error) {
+              logger.error('Could not post claim message to thread:', error);
+            }
+          }
+
+          return;
         }
 
         // Get assignees
@@ -1003,7 +1078,7 @@ View with \`/task list id:${taskId}\`.`
             const thread = await interaction.guild.channels.fetch(task.thread_id);
             if (thread && thread.isThread()) {
               if (action === 'complete') {
-                // Post completion message
+                // Post completion message FIRST
                 const completionMsg = `✅ **Task Completed**\n` +
                   `Marked as complete by: <@${interaction.user.id}>\n` +
                   `Thread will be closed and archived.`;
@@ -1011,31 +1086,52 @@ View with \`/task list id:${taskId}\`.`
 
                 // Rename thread to "Complete: xxx"
                 const newThreadName = `Complete: ${task.title.substring(0, 90)}`;
-                await thread.setName(newThreadName).catch(err => 
-                  console.warn('Could not rename thread:', err)
-                );
+                try {
+                  await thread.setName(newThreadName);
+                  logger.info(`Renamed thread to: ${newThreadName}`);
+                } catch (err) {
+                  logger.error('Could not rename thread:', err);
+                }
 
-                // Close and archive the thread
-                await thread.setArchived(true).catch(err => 
-                  console.warn('Could not archive thread:', err)
-                );
-                await thread.setLocked(true).catch(err => 
-                  console.warn('Could not lock thread:', err)
-                );
+                // Lock the thread BEFORE archiving (Discord requirement)
+                try {
+                  await thread.setLocked(true);
+                  logger.info('Thread locked successfully');
+                } catch (err) {
+                  logger.error('Could not lock thread:', err);
+                }
+
+                // Archive the thread LAST
+                try {
+                  await thread.setArchived(true);
+                  logger.info('Thread archived successfully');
+                } catch (err) {
+                  logger.error('Could not archive thread:', err);
+                }
               } else if (action === 'reopen') {
-                // Unarchive and unlock thread if reopening
-                await thread.setArchived(false).catch(err => 
-                  console.warn('Could not unarchive thread:', err)
-                );
-                await thread.setLocked(false).catch(err => 
-                  console.warn('Could not unlock thread:', err)
-                );
+                // Unarchive and unlock thread if reopening (reverse order)
+                try {
+                  await thread.setArchived(false);
+                  logger.info('Thread unarchived');
+                } catch (err) {
+                  logger.error('Could not unarchive thread:', err);
+                }
+                
+                try {
+                  await thread.setLocked(false);
+                  logger.info('Thread unlocked');
+                } catch (err) {
+                  logger.error('Could not unlock thread:', err);
+                }
 
                 // Rename thread back to "Task: xxx"
                 const newThreadName = `Task: ${task.title.substring(0, 93)}`;
-                await thread.setName(newThreadName).catch(err => 
-                  console.warn('Could not rename thread:', err)
-                );
+                try {
+                  await thread.setName(newThreadName);
+                  logger.info(`Renamed thread to: ${newThreadName}`);
+                } catch (err) {
+                  logger.error('Could not rename thread:', err);
+                }
 
                 // Post reopen message
                 const statusUpdate = `🔓 **Task Reopened**\n` +
@@ -1049,10 +1145,14 @@ View with \`/task list id:${taskId}\`.`
                   `Updated by: <@${interaction.user.id}>`;
                 await thread.send(statusUpdate);
               }
+            } else {
+              logger.warn('Thread not found or not a thread:', task.thread_id);
             }
           } catch (error) {
-            console.warn('Could not perform thread operations:', error);
+            logger.error('Error performing thread operations:', error);
           }
+        } else {
+          logger.warn('No thread_id found for task:', taskId);
         }
 
       } catch (error) {
