@@ -1108,6 +1108,40 @@ View with \`/task list id:${taskId}\`.`
                 } catch (err) {
                   logger.error('Could not archive thread:', err);
                 }
+                
+                // Add to changelog if current version exists
+                const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+                if (currentVersion) {
+                  try {
+                    const entryId = `entry-${Date.now()}`;
+                    db.prepare(`
+                      INSERT INTO changelog_entries
+                      (id, version, entry_type, entry_text, task_id, author_id, created_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?)
+                    `).run(entryId, currentVersion.version, 'task', task.title, taskId, interaction.user.id, Date.now());
+                    
+                    logger.info(`Added task "${task.title}" to changelog version ${currentVersion.version}`);
+                    
+                    // Update changelog thread
+                    const changelogCommand = interaction.client.commands.get('changelog');
+                    if (changelogCommand && changelogCommand.updateChangelogThread) {
+                      await changelogCommand.updateChangelogThread(currentVersion.version);
+                    }
+                  } catch (changelogError) {
+                    logger.error('Error adding task to changelog:', changelogError);
+                    // Don't fail the task completion if changelog fails
+                  }
+                } else {
+                  // Remind user to set a changelog version
+                  try {
+                    await interaction.followUp({
+                      content: '💡 **Tip:** No changelog version is set. Use `/changelog setversion` to track completed tasks in a version!',
+                      ephemeral: true
+                    });
+                  } catch (err) {
+                    // Ignore if followup fails
+                  }
+                }
               } else if (action === 'reopen') {
                 // Unarchive and unlock thread if reopening (reverse order)
                 try {
@@ -1161,6 +1195,92 @@ View with \`/task list id:${taskId}\`.`
           await interaction.followUp({ content: '❌ Error updating task status.', ephemeral: true });
         } else {
           await interaction.reply({ content: '❌ Error updating task status.', ephemeral: true });
+        }
+      }
+      return;
+    }
+    
+    // Handle changelog version buttons
+    if (['changelog'].includes(buttonAction)) {
+      handledByFirstHandler = true;
+      try {
+        const action = customIdParts[1]; // complete_current | keep_current | cancel
+        const newVersion = customIdParts[3]; // The new version to create
+        
+        if (action === 'cancel') {
+          return interaction.update({ content: 'Cancelled.', components: [] });
+        }
+        
+        if (action === 'complete' && customIdParts[2] === 'current') {
+          await interaction.deferUpdate();
+          
+          // Complete the current version
+          const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+          if (currentVersion) {
+            const changelogCommand = interaction.client.commands.get('changelog');
+            if (changelogCommand) {
+              // Generate summary
+              const summary = await changelogCommand.generateVersionSummary(currentVersion.version);
+              
+              // Update database
+              db.prepare(`
+                UPDATE changelog_versions 
+                SET status = 'complete', is_current = 0, completed_at = ?, completion_report = ?
+                WHERE version = ?
+              `).run(Date.now(), summary, currentVersion.version);
+              
+              // Update thread
+              const thread = await interaction.guild.channels.fetch(currentVersion.thread_id).catch(() => null);
+              if (thread && thread.isThread()) {
+                const summaryEmbed = new EmbedBuilder()
+                  .setTitle(`📊 Version ${currentVersion.version} - Completion Report`)
+                  .setDescription(summary)
+                  .setColor(0x00FF00)
+                  .setTimestamp();
+                
+                await thread.send({ embeds: [summaryEmbed] });
+                await thread.setName(`Changelog: v${currentVersion.version} [Complete]`).catch(() => {});
+                await thread.setLocked(true).catch(() => {});
+                await thread.setArchived(true).catch(() => {});
+              }
+            }
+          }
+          
+          // Now create the new version
+          const changelogChannelId = interaction.client.changelogSettings?.channelId || 
+            db.prepare('SELECT value FROM bot_settings WHERE key = ?').get('changelog_channel_id')?.value;
+          const changelogChannel = await interaction.guild.channels.fetch(changelogChannelId).catch(() => null);
+          
+          if (changelogChannel) {
+            const changelogCommand = interaction.client.commands.get('changelog');
+            if (changelogCommand) {
+              await changelogCommand.createVersion(interaction, newVersion, changelogChannel);
+            }
+          }
+        } else if (action === 'keep' && customIdParts[2] === 'current') {
+          await interaction.deferUpdate();
+          
+          // Just set current version to not current
+          db.prepare('UPDATE changelog_versions SET is_current = 0 WHERE is_current = 1').run();
+          
+          // Create new version
+          const changelogChannelId = interaction.client.changelogSettings?.channelId || 
+            db.prepare('SELECT value FROM bot_settings WHERE key = ?').get('changelog_channel_id')?.value;
+          const changelogChannel = await interaction.guild.channels.fetch(changelogChannelId).catch(() => null);
+          
+          if (changelogChannel) {
+            const changelogCommand = interaction.client.commands.get('changelog');
+            if (changelogCommand) {
+              await changelogCommand.createVersion(interaction, newVersion, changelogChannel);
+            }
+          }
+        }
+      } catch (error) {
+        logger.error('Error handling changelog button:', error);
+        if (interaction.deferred || interaction.replied) {
+          await interaction.followUp({ content: '❌ Error updating changelog version.', ephemeral: true });
+        } else {
+          await interaction.reply({ content: '❌ Error updating changelog version.', ephemeral: true });
         }
       }
       return;

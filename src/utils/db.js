@@ -144,6 +144,31 @@ CREATE TABLE IF NOT EXISTS simple_tasks (
   message_id TEXT,
   channel_id TEXT
 );
+
+CREATE TABLE IF NOT EXISTS changelog_versions (
+  version TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  guild_id TEXT NOT NULL,
+  status TEXT DEFAULT 'open',
+  is_current INTEGER DEFAULT 0,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  completion_report TEXT
+);
+
+CREATE TABLE IF NOT EXISTS changelog_entries (
+  id TEXT PRIMARY KEY,
+  version TEXT NOT NULL,
+  entry_type TEXT NOT NULL,
+  entry_text TEXT NOT NULL,
+  task_id TEXT,
+  author_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(version) REFERENCES changelog_versions(version) ON DELETE CASCADE,
+  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE SET NULL
+);
 `);
 // Export our file-based database implementation
 module.exports = db;

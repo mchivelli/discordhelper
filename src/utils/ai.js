@@ -1309,6 +1309,42 @@ function validateAndEnhanceAnalysis(analysis, messages, context) {
   return validatedAnalysis;
 }
 
+// Generate a concise changelog summary for a version
+async function generateChangelogSummary(version, taskList, manualEntries, contributorIds, durationDays) {
+  const prompt = `Generate a concise changelog summary for version ${version}.
+
+**Completed Tasks:**
+${taskList.length > 0 ? taskList.map((t, i) => `${i + 1}. ${t}`).join('\n') : 'None'}
+
+**Manual Entries:**
+${manualEntries.length > 0 ? manualEntries.map((e, i) => `${i + 1}. ${e}`).join('\n') : 'None'}
+
+**Development Duration:** ${durationDays} days
+**Contributors:** ${contributorIds.length} team members
+
+Please provide a professional changelog summary with:
+1. Brief overview (2-3 sentences) - what was the focus of this version?
+2. Key accomplishments (bullet points, max 5 most important items)
+3. Notable highlights or improvements
+4. One-line version description
+
+Keep it clear, professional, and under 500 words. Focus on what matters to developers and administrators.`;
+
+  const messages = [
+    { role: 'system', content: 'You are a technical writer creating concise changelog summaries for software versions.' },
+    { role: 'user', content: prompt }
+  ];
+
+  try {
+    const summary = await callLLMAPI(messages, 800, SUMMARIZATION_MODEL);
+    return summary;
+  } catch (error) {
+    logger.error('Error generating changelog summary:', error);
+    // Return a basic summary as fallback
+    return `## Version ${version}\n\n**Duration:** ${durationDays} days\n**Contributors:** ${contributorIds.length}\n**Tasks:** ${taskList.length} completed\n**Entries:** ${manualEntries.length} manual\n\nThis version includes ${taskList.length} completed tasks and ${manualEntries.length} manual entries.`;
+  }
+}
+
 // Export all functions
 module.exports = {
     callLLMAPI,
@@ -1327,5 +1363,6 @@ module.exports = {
     getPreviousDayMessages,
     getChannelMessages,
     fetchMessagesFromDiscord,
-    analyzeChannelMessages
+    analyzeChannelMessages,
+    generateChangelogSummary
 };

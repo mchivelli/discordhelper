@@ -95,6 +95,42 @@ module.exports = {
       .addChannelOption(option => 
         option.setName('channel')
         .setDescription('Channel to post changelog entries to')
+        .setRequired(true)))
+    .addSubcommand(sub =>
+      sub.setName('setversion')
+      .setDescription('Set the current changelog version (creates a version thread)')
+      .addStringOption(option =>
+        option.setName('version')
+        .setDescription('Version number (e.g., 1.20.2)')
+        .setRequired(true)))
+    .addSubcommand(sub =>
+      sub.setName('addentry')
+      .setDescription('Add a manual entry to the current changelog version')
+      .addStringOption(option =>
+        option.setName('entry')
+        .setDescription('Entry text to add')
+        .setRequired(true)))
+    .addSubcommand(sub =>
+      sub.setName('complete')
+      .setDescription('Mark the current changelog version as complete and generate report'))
+    .addSubcommand(sub =>
+      sub.setName('versions')
+      .setDescription('List all changelog versions')
+      .addStringOption(option =>
+        option.setName('status')
+        .setDescription('Filter by status')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Open', value: 'open' },
+          { name: 'Complete', value: 'complete' },
+          { name: 'All', value: 'all' }
+        )))
+    .addSubcommand(sub =>
+      sub.setName('view')
+      .setDescription('View a specific changelog version')
+      .addStringOption(option =>
+        option.setName('version')
+        .setDescription('Version to view')
         .setRequired(true))),
   
   async execute(interaction) {
@@ -267,12 +303,415 @@ module.exports = {
           ephemeral: true
         });
       }
+      
+      // Handle setversion subcommand
+      if (subcommand === 'setversion') {
+        return this.handleSetVersion(interaction);
+      }
+      
+      // Handle addentry subcommand
+      if (subcommand === 'addentry') {
+        return this.handleAddEntry(interaction);
+      }
+      
+      // Handle complete subcommand
+      if (subcommand === 'complete') {
+        return this.handleComplete(interaction);
+      }
+      
+      // Handle versions subcommand
+      if (subcommand === 'versions') {
+        return this.handleVersions(interaction);
+      }
+      
+      // Handle view subcommand
+      if (subcommand === 'view') {
+        return this.handleView(interaction);
+      }
     } catch (error) {
       logger.error('Error in changelog command:', error);
       return interaction.reply({
         content: 'An error occurred while processing the changelog command.',
         ephemeral: true
       });
+    }
+  },
+  
+  async handleSetVersion(interaction) {
+    await interaction.deferReply();
+    
+    const version = interaction.options.getString('version');
+    
+    // Get changelog channel
+    const changelogChannelId = interaction.client.changelogSettings?.channelId || 
+      db.prepare('SELECT value FROM bot_settings WHERE key = ?').get('changelog_channel_id')?.value;
+    
+    if (!changelogChannelId) {
+      return interaction.editReply('❌ No changelog channel set. Use `/changelog set-channel` first.');
+    }
+    
+    const changelogChannel = await interaction.guild.channels.fetch(changelogChannelId).catch(() => null);
+    if (!changelogChannel) {
+      return interaction.editReply('❌ Changelog channel not found!');
+    }
+    
+    // Check if this version already exists
+    const existingVersion = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
+    if (existingVersion) {
+      return interaction.editReply(`❌ Version \`${version}\` already exists!`);
+    }
+    
+    // Check if there's a current version
+    const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+    
+    if (currentVersion) {
+      // Ask user if they want to complete the current version
+      const actionRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`changelog_complete_current_${version}`)
+            .setLabel(`Complete v${currentVersion.version} & Create v${version}`)
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`changelog_keep_current_${version}`)
+            .setLabel(`Keep v${currentVersion.version} Open & Create v${version}`)
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('changelog_cancel')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary)
+        );
+      
+      return interaction.editReply({
+        content: `⚠️ Version \`${currentVersion.version}\` is currently open.\nWhat would you like to do?`,
+        components: [actionRow]
+      });
+    }
+    
+    // No current version, create this one
+    await this.createVersion(interaction, version, changelogChannel);
+  },
+  
+  async createVersion(interaction, version, changelogChannel) {
+    try {
+      // Create the embed for the version thread
+      const embed = new EmbedBuilder()
+        .setTitle(`📋 Changelog: v${version}`)
+        .setColor(0x00FF00)
+        .setDescription('This version is currently open. Tasks completed will be automatically logged here.')
+        .addFields(
+          { name: 'Status', value: '🟢 Open', inline: true },
+          { name: 'Started', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true }
+        )
+        .setTimestamp();
+      
+      // Send message to create thread from
+      const message = await changelogChannel.send({ embeds: [embed] });
+      
+      // Create thread
+      const thread = await message.startThread({
+        name: `Changelog: v${version}`,
+        autoArchiveDuration: 10080, // 7 days
+        reason: `Changelog version ${version} created by ${interaction.user.tag}`
+      });
+      
+      // Store in database
+      db.prepare(`
+        INSERT INTO changelog_versions 
+        (version, thread_id, channel_id, guild_id, status, is_current, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        version,
+        thread.id,
+        changelogChannel.id,
+        interaction.guildId,
+        'open',
+        1, // Set as current
+        interaction.user.id,
+        Date.now()
+      );
+      
+      // Send welcome message in thread
+      await thread.send(`🎯 **Version ${version} Tracking Started**\n\nAll completed admin tasks will be automatically logged here.\nUse \`/changelog addentry\` to manually add entries.`);
+      
+      logger.info(`Created changelog version ${version} in thread ${thread.id}`);
+      
+      if (interaction.deferred || interaction.replied) {
+        return interaction.editReply(`✅ Version \`${version}\` created and set as current!\n📝 Thread: <#${thread.id}>`);
+      } else {
+        return interaction.reply(`✅ Version \`${version}\` created and set as current!\n📝 Thread: <#${thread.id}>`);
+      }
+    } catch (error) {
+      logger.error('Error creating changelog version:', error);
+      if (interaction.deferred || interaction.replied) {
+        return interaction.editReply('❌ Failed to create version: ' + error.message);
+      } else {
+        return interaction.reply({ content: '❌ Failed to create version: ' + error.message, ephemeral: true });
+      }
+    }
+  },
+  
+  async handleAddEntry(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+    
+    const entry = interaction.options.getString('entry');
+    
+    // Get current version
+    const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+    
+    if (!currentVersion) {
+      return interaction.editReply('❌ No active changelog version. Use `/changelog setversion` first.');
+    }
+    
+    // Add entry to database
+    const entryId = `entry-${Date.now()}`;
+    db.prepare(`
+      INSERT INTO changelog_entries
+      (id, version, entry_type, entry_text, task_id, author_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(entryId, currentVersion.version, 'manual', entry, null, interaction.user.id, Date.now());
+    
+    // Update thread
+    await this.updateChangelogThread(currentVersion.version);
+    
+    return interaction.editReply(`✅ Entry added to version \`${currentVersion.version}\`!`);
+  },
+  
+  async handleComplete(interaction) {
+    await interaction.deferReply();
+    
+    // Get current version
+    const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+    
+    if (!currentVersion) {
+      return interaction.editReply('❌ No active changelog version to complete.');
+    }
+    
+    // Generate AI summary
+    const summary = await this.generateVersionSummary(currentVersion.version);
+    
+    // Update database
+    db.prepare(`
+      UPDATE changelog_versions 
+      SET status = 'complete', is_current = 0, completed_at = ?, completion_report = ?
+      WHERE version = ?
+    `).run(Date.now(), summary, currentVersion.version);
+    
+    // Update thread
+    const thread = await interaction.guild.channels.fetch(currentVersion.thread_id).catch(() => null);
+    if (thread && thread.isThread()) {
+      // Post summary
+      const summaryEmbed = new EmbedBuilder()
+        .setTitle(`📊 Version ${currentVersion.version} - Completion Report`)
+        .setDescription(summary)
+        .setColor(0x00FF00)
+        .setTimestamp();
+      
+      await thread.send({ embeds: [summaryEmbed] });
+      
+      // Rename, lock and archive
+      await thread.setName(`Changelog: v${currentVersion.version} [Complete]`).catch(() => {});
+      await thread.setLocked(true).catch(() => {});
+      await thread.setArchived(true).catch(() => {});
+    }
+    
+    return interaction.editReply(`✅ Version \`${currentVersion.version}\` marked as complete!\nSummary has been posted in the changelog thread.`);
+  },
+  
+  async handleVersions(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+    
+    const status = interaction.options.getString('status') || 'all';
+    
+    let query = 'SELECT * FROM changelog_versions';
+    const params = [];
+    
+    if (status !== 'all') {
+      query += ' WHERE status = ?';
+      params.push(status);
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const versions = db.prepare(query).all(...params);
+    
+    if (versions.length === 0) {
+      return interaction.editReply('📋 No changelog versions found.');
+    }
+    
+    const embed = new EmbedBuilder()
+      .setTitle('📋 Changelog Versions')
+      .setColor(0x5865F2)
+      .setTimestamp();
+    
+    for (const ver of versions.slice(0, 10)) {
+      const statusEmoji = ver.status === 'open' ? '🟢' : '✅';
+      const currentBadge = ver.is_current ? ' **[CURRENT]**' : '';
+      const entries = db.prepare('SELECT COUNT(*) as count FROM changelog_entries WHERE version = ?').get(ver.version);
+      
+      embed.addFields({
+        name: `${statusEmoji} v${ver.version}${currentBadge}`,
+        value: `**Entries:** ${entries.count}\n**Thread:** <#${ver.thread_id}>\n**Status:** ${ver.status}`,
+        inline: false
+      });
+    }
+    
+    if (versions.length > 10) {
+      embed.setFooter({ text: `Showing 10 of ${versions.length} versions` });
+    }
+    
+    return interaction.editReply({ embeds: [embed] });
+  },
+  
+  async handleView(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+    
+    const version = interaction.options.getString('version');
+    
+    const versionData = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
+    
+    if (!versionData) {
+      return interaction.editReply(`❌ Version \`${version}\` not found.`);
+    }
+    
+    const entries = db.prepare('SELECT * FROM changelog_entries WHERE version = ? ORDER BY created_at ASC').all(version);
+    
+    const embed = new EmbedBuilder()
+      .setTitle(`📋 Changelog: v${version}`)
+      .setColor(versionData.status === 'open' ? 0x00FF00 : 0x808080)
+      .setDescription(versionData.completion_report || 'This version is currently open.')
+      .addFields(
+        { name: 'Status', value: versionData.status === 'open' ? '🟢 Open' : '✅ Complete', inline: true },
+        { name: 'Entries', value: entries.length.toString(), inline: true },
+        { name: 'Thread', value: `<#${versionData.thread_id}>`, inline: true }
+      )
+      .setTimestamp();
+    
+    return interaction.editReply({ embeds: [embed] });
+  },
+  
+  async updateChangelogThread(version) {
+    try {
+      const versionData = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
+      if (!versionData) return;
+      
+      const entries = db.prepare('SELECT * FROM changelog_entries WHERE version = ? ORDER BY created_at ASC').all(version);
+      
+      // Format entries
+      let taskSection = '';
+      let manualSection = '';
+      let taskCount = 0;
+      let manualCount = 0;
+      
+      for (const entry of entries) {
+        const date = new Date(entry.created_at);
+        const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        
+        if (entry.entry_type === 'task') {
+          taskSection += `✅ **${entry.entry_text}**\n   → By: <@${entry.author_id}> | ${dateStr}\n\n`;
+          taskCount++;
+        } else if (entry.entry_type === 'manual') {
+          manualSection += `• ${entry.entry_text}\n`;
+          manualCount++;
+        }
+      }
+      
+      // Build thread message
+      let content = `📋 **Changelog: v${version}**\n`;
+      content += `Status: ${versionData.status === 'open' ? '🟢 Open' : '✅ Complete'}\n\n`;
+      content += `═══════════════════════════════════════\n\n`;
+      
+      if (taskSection) {
+        content += `📌 **COMPLETED TASKS**\n`;
+        content += `────────────────────────────────────────\n`;
+        content += taskSection;
+      }
+      
+      if (manualSection) {
+        content += `📝 **MANUAL ENTRIES**\n`;
+        content += `────────────────────────────────────────\n`;
+        content += manualSection;
+        content += `\n`;
+      }
+      
+      if (!taskSection && !manualSection) {
+        content += `_No entries yet. Complete admin tasks or use \`/changelog addentry\` to add entries._\n\n`;
+      }
+      
+      content += `═══════════════════════════════════════\n`;
+      content += `**Total:** ${taskCount} tasks | ${manualCount} manual entries`;
+      
+      // Fetch thread and update
+      const thread = await interaction.client.channels.fetch(versionData.thread_id).catch(() => null);
+      if (thread && thread.isThread()) {
+        // Send as new message (threads don't allow editing starter message)
+        const messages = await thread.messages.fetch({ limit: 10 });
+        const botMessages = messages.filter(m => m.author.id === interaction.client.user.id && m.content.startsWith('📋 **Changelog:'));
+        
+        // Delete old summary messages
+        for (const msg of botMessages.values()) {
+          await msg.delete().catch(() => {});
+        }
+        
+        // Send new summary
+        await thread.send(content);
+      }
+    } catch (error) {
+      logger.error('Error updating changelog thread:', error);
+    }
+  },
+  
+  async generateVersionSummary(version) {
+    const entries = db.prepare('SELECT * FROM changelog_entries WHERE version = ? ORDER BY created_at ASC').all(version);
+    const versionData = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
+    
+    if (entries.length === 0) {
+      return 'No entries were added to this version.';
+    }
+    
+    // Get unique contributors
+    const contributors = [...new Set(entries.map(e => e.author_id))];
+    
+    // Build task list
+    const taskEntries = entries.filter(e => e.entry_type === 'task');
+    const manualEntries = entries.filter(e => e.entry_type === 'manual');
+    
+    // Calculate duration
+    const startTime = new Date(versionData.created_at);
+    const endTime = new Date();
+    const durationDays = Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24));
+    
+    try {
+      // Use AI to generate summary
+      const { generateChangelogSummary } = require('../utils/ai');
+      
+      const summary = await generateChangelogSummary(
+        version,
+        taskEntries.map(e => e.entry_text),
+        manualEntries.map(e => e.entry_text),
+        contributors,
+        durationDays
+      );
+      
+      return summary;
+    } catch (error) {
+      logger.error('Error generating AI summary, using fallback:', error);
+      
+      // Fallback summary
+      let summary = `## Version ${version} Summary\n\n`;
+      summary += `**Duration:** ${durationDays} days\n`;
+      summary += `**Contributors:** ${contributors.length}\n`;
+      summary += `**Tasks Completed:** ${taskEntries.length}\n`;
+      summary += `**Manual Entries:** ${manualEntries.length}\n\n`;
+      
+      if (taskEntries.length > 0) {
+        summary += `### Completed Tasks\n`;
+        taskEntries.slice(0, 5).forEach(e => {
+          summary += `• ${e.entry_text}\n`;
+        });
+      }
+      
+      return summary;
     }
   }
 };
