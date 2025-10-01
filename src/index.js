@@ -932,55 +932,126 @@ View with \`/task list id:${taskId}\`.`
         const date = new Date(task.created_at);
         const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 
-        // Update embed
-        const embed = new EmbedBuilder()
-          .setTitle(task.title)
-          .setDescription(task.description)
-          .setColor(embedColor)
-          .addFields(
-            { name: 'Status', value: `${statusEmoji} ${statusText}`, inline: true },
-            { name: 'Creator', value: `<@${task.creator_id}>`, inline: true },
-            { name: 'Assigned To', value: assigneeList || 'None', inline: false },
-            { name: 'Discussion Thread', value: `<#${task.thread_id}>`, inline: true }
-          )
-          .setFooter({ text: `Task ID: ${taskId} • ${dateStr}` })
-          .setTimestamp();
+        let embed;
+        let actionRow;
 
-        // Create action buttons
-        const actionRow = new ActionRowBuilder()
-          .addComponents(
-            new ButtonBuilder()
-              .setCustomId(`admintask_complete_${taskId}`)
-              .setLabel('Mark Complete')
-              .setStyle(ButtonStyle.Success)
-              .setEmoji('✅'),
-            new ButtonBuilder()
-              .setCustomId(`admintask_progress_${taskId}`)
-              .setLabel('Mark In Progress')
-              .setStyle(ButtonStyle.Primary)
-              .setEmoji('🔄'),
-            new ButtonBuilder()
-              .setCustomId(`admintask_reopen_${taskId}`)
-              .setLabel('Reopen')
-              .setStyle(ButtonStyle.Secondary)
-              .setEmoji('🔓')
-          );
+        // Create compact embed for completed tasks, full embed for others
+        // Use the NEW status (after update) to determine the correct view
+        if (newStatus === 'complete') {
+          // Compact/collapsed embed for completed tasks
+          embed = new EmbedBuilder()
+            .setTitle(`✅ ${task.title}`)
+            .setColor(embedColor)
+            .addFields(
+              { name: 'Status', value: `${statusEmoji} ${statusText}`, inline: true },
+              { name: 'Completed by', value: `<@${interaction.user.id}>`, inline: true }
+            )
+            .setFooter({ text: `Task ID: ${taskId} • Completed ${dateStr}` })
+            .setTimestamp();
+
+          // Only show reopen button for completed tasks
+          actionRow = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`admintask_reopen_${taskId}`)
+                .setLabel('Reopen')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('🔓')
+            );
+        } else {
+          // Full embed for in-progress/reopened tasks
+          embed = new EmbedBuilder()
+            .setTitle(task.title)
+            .setDescription(task.description)
+            .setColor(embedColor)
+            .addFields(
+              { name: 'Status', value: `${statusEmoji} ${statusText}`, inline: true },
+              { name: 'Creator', value: `<@${task.creator_id}>`, inline: true },
+              { name: 'Assigned To', value: assigneeList || 'None', inline: false },
+              { name: 'Discussion Thread', value: `<#${task.thread_id}>`, inline: true }
+            )
+            .setFooter({ text: `Task ID: ${taskId} • ${dateStr}` })
+            .setTimestamp();
+
+          // All buttons for non-completed tasks
+          actionRow = new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`admintask_complete_${taskId}`)
+                .setLabel('Mark Complete')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅'),
+              new ButtonBuilder()
+                .setCustomId(`admintask_progress_${taskId}`)
+                .setLabel('Mark In Progress')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🔄'),
+              new ButtonBuilder()
+                .setCustomId(`admintask_reopen_${taskId}`)
+                .setLabel('Reopen')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('🔓')
+            );
+        }
 
         // Update the message
         await interaction.update({ embeds: [embed], components: [actionRow] });
 
-        // Post status update in thread only (not in main channel)
+        // Handle thread operations
         if (task.thread_id) {
           try {
             const thread = await interaction.guild.channels.fetch(task.thread_id);
             if (thread && thread.isThread()) {
-              const statusUpdate = `📋 **Task Status Updated**\n` +
-                `${statusEmoji} Status changed to: **${statusText}**\n` +
-                `Updated by: <@${interaction.user.id}>`;
-              await thread.send(statusUpdate);
+              if (action === 'complete') {
+                // Post completion message
+                const completionMsg = `✅ **Task Completed**\n` +
+                  `Marked as complete by: <@${interaction.user.id}>\n` +
+                  `Thread will be closed and archived.`;
+                await thread.send(completionMsg);
+
+                // Rename thread to "Complete: xxx"
+                const newThreadName = `Complete: ${task.title.substring(0, 90)}`;
+                await thread.setName(newThreadName).catch(err => 
+                  console.warn('Could not rename thread:', err)
+                );
+
+                // Close and archive the thread
+                await thread.setArchived(true).catch(err => 
+                  console.warn('Could not archive thread:', err)
+                );
+                await thread.setLocked(true).catch(err => 
+                  console.warn('Could not lock thread:', err)
+                );
+              } else if (action === 'reopen') {
+                // Unarchive and unlock thread if reopening
+                await thread.setArchived(false).catch(err => 
+                  console.warn('Could not unarchive thread:', err)
+                );
+                await thread.setLocked(false).catch(err => 
+                  console.warn('Could not unlock thread:', err)
+                );
+
+                // Rename thread back to "Task: xxx"
+                const newThreadName = `Task: ${task.title.substring(0, 93)}`;
+                await thread.setName(newThreadName).catch(err => 
+                  console.warn('Could not rename thread:', err)
+                );
+
+                // Post reopen message
+                const statusUpdate = `🔓 **Task Reopened**\n` +
+                  `Status changed to: **${statusText}**\n` +
+                  `Updated by: <@${interaction.user.id}>`;
+                await thread.send(statusUpdate);
+              } else {
+                // Just post status update for other actions
+                const statusUpdate = `📋 **Task Status Updated**\n` +
+                  `${statusEmoji} Status changed to: **${statusText}**\n` +
+                  `Updated by: <@${interaction.user.id}>`;
+                await thread.send(statusUpdate);
+              }
             }
           } catch (error) {
-            console.warn('Could not post status update to thread:', error);
+            console.warn('Could not perform thread operations:', error);
           }
         }
 
