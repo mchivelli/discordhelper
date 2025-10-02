@@ -238,6 +238,22 @@ class QueryBuilder {
   executeSelectQuery(...params) {
     const items = loadTable(this.tableName);
     
+    // Handle changelog_versions queries
+    if (this.tableName === 'changelog_versions') {
+      if (this.query.toLowerCase().includes('where version =')) {
+        return items.find(item => item.version === params[0]) || null;
+      } else if (this.query.toLowerCase().includes('where is_current = 1')) {
+        return items.find(item => item.is_current === 1 || item.is_current === true) || null;
+      }
+    }
+    
+    // Handle changelog_entries queries
+    if (this.tableName === 'changelog_entries') {
+      if (this.query.toLowerCase().includes('where version =')) {
+        return items.find(item => item.version === params[0]) || null;
+      }
+    }
+    
     // Handle common SELECT patterns
     if (this.query.toLowerCase().includes('where id =')) {
       const result = items.find(item => item.id === params[0]) || null;
@@ -356,6 +372,20 @@ class QueryBuilder {
 
       let filtered = items;
       
+      // Handle changelog_versions queries
+      if (this.tableName === 'changelog_versions') {
+        if (this.query.toLowerCase().includes('where status =')) {
+          filtered = items.filter(item => item.status === params[0]);
+        }
+      }
+      
+      // Handle changelog_entries queries
+      if (this.tableName === 'changelog_entries') {
+        if (this.query.toLowerCase().includes('where version =')) {
+          filtered = items.filter(item => item.version === params[0]);
+        }
+      }
+      
       if (this.query.toLowerCase().includes('task_id =') || this.query.toLowerCase().includes('task_id=')) {
         console.log(`DEBUG: all() - Filtering ${this.tableName} by task_id = ${params[0]}`);
         console.log(`DEBUG: all() - Before filtering:`, items.map(item => ({id: item.id, task_id: item.task_id})));
@@ -376,6 +406,8 @@ class QueryBuilder {
           filtered.sort((a, b) => a.idx - b.idx);
         } else if (this.query.toLowerCase().includes('order by created_at desc')) {
           filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+        } else if (this.query.toLowerCase().includes('order by created_at asc')) {
+          filtered.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
         }
       }
       
@@ -595,6 +627,38 @@ class QueryBuilder {
             };
           }
           break;
+        case 'changelog_versions':
+          // Positional: version, thread_id, channel_id, guild_id, status, is_current, created_by, created_at
+          if (args.length >= 8) {
+            item = {
+              id: args[0], // Use version as id
+              version: args[0],
+              thread_id: args[1],
+              channel_id: args[2],
+              guild_id: args[3],
+              status: args[4] || 'open',
+              is_current: args[5] || 0,
+              created_by: args[6],
+              created_at: args[7] || Date.now(),
+              completed_at: null,
+              completion_report: null
+            };
+          }
+          break;
+        case 'changelog_entries':
+          // Positional: id, version, entry_type, entry_text, task_id, author_id, created_at
+          if (args.length >= 7) {
+            item = {
+              id: args[0],
+              version: args[1],
+              entry_type: args[2],
+              entry_text: args[3],
+              task_id: args[4] || null,
+              author_id: args[5],
+              created_at: args[6] || Date.now()
+            };
+          }
+          break;
       }
     }
     
@@ -645,6 +709,40 @@ class QueryBuilder {
   executeUpdate(...args) {
     const items = loadTable(this.tableName);
     let updatedCount = 0;
+    
+    // Handle changelog_versions UPDATE queries
+    if (this.tableName === 'changelog_versions') {
+      // UPDATE changelog_versions SET status = ?, is_current = ?, completed_at = ?, completion_report = ? WHERE version = ?
+      if (this.query.toLowerCase().includes('set status') && this.query.toLowerCase().includes('where version =')) {
+        const status = args[0];
+        const isCurrent = args[1];
+        const completedAt = args[2];
+        const completionReport = args[3];
+        const version = args[4];
+        
+        const item = items.find(i => i.version === version);
+        if (item) {
+          item.status = status;
+          item.is_current = isCurrent;
+          item.completed_at = completedAt;
+          item.completion_report = completionReport;
+          saveItem(this.tableName, item);
+          updatedCount = 1;
+        }
+        return { changes: updatedCount };
+      }
+      // UPDATE changelog_versions SET is_current = 0 WHERE is_current = 1
+      if (this.query.toLowerCase().includes('set is_current = 0')) {
+        for (const item of items) {
+          if (item.is_current === 1 || item.is_current === true) {
+            item.is_current = 0;
+            saveItem(this.tableName, item);
+            updatedCount++;
+          }
+        }
+        return { changes: updatedCount };
+      }
+    }
     
     // Parse UPDATE queries based on common patterns
     if (this.tableName === 'issues') {
