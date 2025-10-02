@@ -27,7 +27,9 @@ const TABLES = {
   issues: path.join(DB_ROOT, 'issues'),
   admin_tasks: path.join(DB_ROOT, 'admin_tasks'),
   admin_task_assignees: path.join(DB_ROOT, 'admin_task_assignees'),
-  simple_tasks: path.join(DB_ROOT, 'simple_tasks')
+  simple_tasks: path.join(DB_ROOT, 'simple_tasks'),
+  changelog_versions: path.join(DB_ROOT, 'changelog_versions'),
+  changelog_entries: path.join(DB_ROOT, 'changelog_entries')
 };
 
 // Ensure all table directories exist
@@ -46,7 +48,9 @@ const cache = {
   issues: new Map(),
   admin_tasks: new Map(),
   admin_task_assignees: new Map(),
-  simple_tasks: new Map()
+  simple_tasks: new Map(),
+  changelog_versions: new Map(),
+  changelog_entries: new Map()
 };
 
 /**

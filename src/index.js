@@ -1125,7 +1125,7 @@ View with \`/task list id:${taskId}\`.`
                     // Update changelog thread
                     const changelogCommand = interaction.client.commands.get('changelog');
                     if (changelogCommand && changelogCommand.updateChangelogThread) {
-                      await changelogCommand.updateChangelogThread(currentVersion.version);
+                      await changelogCommand.updateChangelogThread(currentVersion.version, interaction.client);
                     }
                   } catch (changelogError) {
                     logger.error('Error adding task to changelog:', changelogError);
@@ -1204,7 +1204,62 @@ View with \`/task list id:${taskId}\`.`
     if (['changelog'].includes(buttonAction)) {
       handledByFirstHandler = true;
       try {
-        const action = customIdParts[1]; // complete_current | keep_current | cancel
+        const action = customIdParts[1]; // complete_current | keep_current | cancel | complete_version
+        
+        // Handle complete version button (from thread)
+        if (action === 'complete' && customIdParts[2] === 'version') {
+          const version = customIdParts.slice(3).join('_');
+          await interaction.deferReply({ ephemeral: true });
+          
+          const versionData = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
+          if (!versionData) {
+            return interaction.editReply('❌ Version not found!');
+          }
+          
+          if (versionData.status === 'complete') {
+            return interaction.editReply('❌ This version is already complete!');
+          }
+          
+          // Generate AI summary
+          const changelogCommand = interaction.client.commands.get('changelog');
+          if (!changelogCommand) {
+            return interaction.editReply('❌ Changelog command not available!');
+          }
+          
+          await interaction.editReply('⏳ Generating AI summary report... This may take a moment.');
+          
+          const summary = await changelogCommand.generateVersionSummary(version);
+          
+          // Update database
+          db.prepare(`
+            UPDATE changelog_versions 
+            SET status = 'complete', is_current = 0, completed_at = ?, completion_report = ?
+            WHERE version = ?
+          `).run(Date.now(), summary, version);
+          
+          // Post summary in thread
+          const thread = await interaction.guild.channels.fetch(versionData.thread_id).catch(() => null);
+          if (thread && thread.isThread()) {
+            const summaryEmbed = new EmbedBuilder()
+              .setTitle(`📊 Version ${version} - Completion Report`)
+              .setDescription(summary)
+              .setColor(0x00FF00)
+              .setTimestamp();
+            
+            await thread.send({ embeds: [summaryEmbed] });
+            
+            // Rename, lock and archive
+            await thread.setName(`Changelog: v${version} [Complete]`).catch(() => {});
+            await thread.setLocked(true).catch(() => {});
+            await thread.setArchived(true).catch(() => {});
+          }
+          
+          // Disable the complete button
+          await interaction.message.edit({ components: [] }).catch(() => {});
+          
+          return interaction.editReply(`✅ Version \`${version}\` marked as complete! Summary has been posted in the thread.`);
+        }
+        
         const newVersion = customIdParts[3]; // The new version to create
         
         if (action === 'cancel') {

@@ -431,8 +431,20 @@ module.exports = {
         Date.now()
       );
       
-      // Send welcome message in thread
-      await thread.send(`🎯 **Version ${version} Tracking Started**\n\nAll completed admin tasks will be automatically logged here.\nUse \`/changelog addentry\` to manually add entries.`);
+      // Send welcome message with complete button in thread
+      const completeButton = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`changelog_complete_version_${version}`)
+            .setLabel('Mark Version Complete & Generate Report')
+            .setStyle(ButtonStyle.Success)
+            .setEmoji('✅')
+        );
+      
+      await thread.send({
+        content: `🎯 **Version ${version} Tracking Started**\n\nAll completed admin tasks will be automatically logged here.\nUse \`/changelog addentry\` to manually add entries.\n\nWhen ready to release, click the button below to generate an AI summary report.`,
+        components: [completeButton]
+      });
       
       logger.info(`Created changelog version ${version} in thread ${thread.id}`);
       
@@ -472,7 +484,7 @@ module.exports = {
     `).run(entryId, currentVersion.version, 'manual', entry, null, interaction.user.id, Date.now());
     
     // Update thread
-    await this.updateChangelogThread(currentVersion.version);
+    await this.updateChangelogThread(currentVersion.version, interaction.client);
     
     return interaction.editReply(`✅ Entry added to version \`${currentVersion.version}\`!`);
   },
@@ -590,7 +602,7 @@ module.exports = {
     return interaction.editReply({ embeds: [embed] });
   },
   
-  async updateChangelogThread(version) {
+  async updateChangelogThread(version, client) {
     try {
       const versionData = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
       if (!versionData) return;
@@ -642,11 +654,11 @@ module.exports = {
       content += `**Total:** ${taskCount} tasks | ${manualCount} manual entries`;
       
       // Fetch thread and update
-      const thread = await interaction.client.channels.fetch(versionData.thread_id).catch(() => null);
+      const thread = await client.channels.fetch(versionData.thread_id).catch(() => null);
       if (thread && thread.isThread()) {
         // Send as new message (threads don't allow editing starter message)
         const messages = await thread.messages.fetch({ limit: 10 });
-        const botMessages = messages.filter(m => m.author.id === interaction.client.user.id && m.content.startsWith('📋 **Changelog:'));
+        const botMessages = messages.filter(m => m.author.id === client.user.id && m.content.startsWith('📋 **Changelog:'));
         
         // Delete old summary messages
         for (const msg of botMessages.values()) {
