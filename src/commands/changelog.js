@@ -131,7 +131,38 @@ module.exports = {
       .addStringOption(option =>
         option.setName('version')
         .setDescription('Version to view')
-        .setRequired(true))),
+        .setRequired(true)))
+    .addSubcommand(sub =>
+      sub.setName('delete')
+      .setDescription('Delete a changelog version and its thread')
+      .addStringOption(option =>
+        option.setName('version')
+        .setDescription('Version to delete')
+        .setRequired(true)
+        .setAutocomplete(true))),
+  
+  async autocomplete(interaction) {
+    const focusedOption = interaction.options.getFocused(true);
+    
+    if (focusedOption.name === 'version' && interaction.options.getSubcommand() === 'delete') {
+      // Get all changelog versions
+      const versions = db.prepare('SELECT version FROM changelog_versions ORDER BY created_at DESC LIMIT 25').all();
+      
+      const choices = versions.map(v => ({
+        name: v.version,
+        value: v.version
+      }));
+      
+      if (choices.length === 0) {
+        choices.push({
+          name: 'No versions found',
+          value: 'no_versions'
+        });
+      }
+      
+      return interaction.respond(choices);
+    }
+  },
   
   async execute(interaction) {
     try {
@@ -327,6 +358,11 @@ module.exports = {
       // Handle view subcommand
       if (subcommand === 'view') {
         return this.handleView(interaction);
+      }
+      
+      // Handle delete subcommand
+      if (subcommand === 'delete') {
+        return this.handleDelete(interaction);
       }
     } catch (error) {
       logger.error('Error in changelog command:', error);
@@ -724,6 +760,49 @@ module.exports = {
       }
       
       return summary;
+    }
+  },
+  
+  async handleDelete(interaction) {
+    await interaction.deferReply({ ephemeral: true });
+    
+    const version = interaction.options.getString('version');
+    
+    // Get version data
+    const versionData = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
+    
+    if (!versionData) {
+      return interaction.editReply(`❌ Changelog version **${version}** not found.`);
+    }
+    
+    try {
+      // Delete the thread if it exists
+      if (versionData.thread_id) {
+        try {
+          const thread = await interaction.guild.channels.fetch(versionData.thread_id);
+          if (thread) {
+            await thread.delete('Changelog version deleted');
+            logger.info(`Deleted changelog thread for version ${version}`);
+          }
+        } catch (error) {
+          logger.warn(`Could not delete thread for version ${version}:`, error);
+        }
+      }
+      
+      // Delete all entries for this version
+      const entriesDeleted = db.prepare('DELETE FROM changelog_entries WHERE version = ?').run(version);
+      logger.info(`Deleted ${entriesDeleted.changes} entries for version ${version}`);
+      
+      // Delete the version record
+      db.prepare('DELETE FROM changelog_versions WHERE version = ?').run(version);
+      
+      return interaction.editReply(`✅ **Changelog version ${version} deleted successfully!**\n` +
+        `- Thread deleted\n` +
+        `- ${entriesDeleted.changes} entries removed\n` +
+        `- Version record deleted`);
+    } catch (error) {
+      logger.error('Error deleting changelog version:', error);
+      return interaction.editReply(`❌ Error deleting version: ${error.message}`);
     }
   }
 };
