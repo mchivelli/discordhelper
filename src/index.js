@@ -983,9 +983,12 @@ View with \`/task list id:${taskId}\`.`
         }
 
         // Get assignees
+        console.log('[FIRST HANDLER] Getting assignees for task...');
         const assignees = db.prepare('SELECT user_id FROM admin_task_assignees WHERE task_id = ?').all(taskId);
         const assigneeList = assignees.map(a => `<@${a.user_id}>`).join(', ');
+        console.log('[FIRST HANDLER] Assignees fetched:', assigneeList);
 
+        console.log('[FIRST HANDLER] Determining new status for action:', action);
         let newStatus = task.status;
         let statusEmoji = '🔄';
         let statusText = 'In Progress';
@@ -1009,23 +1012,30 @@ View with \`/task list id:${taskId}\`.`
         }
 
         // Update status in database
+        console.log('[FIRST HANDLER] About to update database - newStatus:', newStatus, 'taskId:', taskId);
         logger.info(`[ADMINTASK] About to update task ${taskId} status to ${newStatus}`);
         const updateResult = db.prepare('UPDATE admin_tasks SET status = ? WHERE task_id = ?').run(newStatus, taskId);
+        console.log('[FIRST HANDLER] Database updated! Result:', updateResult);
         logger.info(`[ADMINTASK] Database update complete:`, updateResult);
 
         // Format date
+        console.log('[FIRST HANDLER] Formatting date from timestamp:', task.created_at);
         logger.info(`[ADMINTASK] Formatting date for task...`);
         const date = new Date(task.created_at);
+        console.log('[FIRST HANDLER] Date object created');
         logger.info(`[ADMINTASK] Date formatted successfully`);
         const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+        console.log('[FIRST HANDLER] Date string created:', dateStr);
 
         let embed;
         let actionRow;
 
         // Create compact embed for completed tasks, full embed for others
         // Use the NEW status (after update) to determine the correct view
+        console.log('[FIRST HANDLER] About to create embed for status:', newStatus);
         logger.info(`[ADMINTASK] Creating embed for status: ${newStatus}`);
         if (newStatus === 'complete') {
+          console.log('[FIRST HANDLER] Status is complete - creating compact embed');
           logger.info(`[ADMINTASK] Creating compact embed for completed task`);
           // Compact/collapsed embed for completed tasks
           embed = new EmbedBuilder()
@@ -1048,6 +1058,7 @@ View with \`/task list id:${taskId}\`.`
                 .setEmoji('🔓')
             );
         } else {
+          console.log('[FIRST HANDLER] Status is NOT complete - creating full embed');
           // Full embed for in-progress/reopened tasks
           embed = new EmbedBuilder()
             .setTitle(task.title)
@@ -1084,17 +1095,23 @@ View with \`/task list id:${taskId}\`.`
         }
 
         // Update the message
+        console.log('[FIRST HANDLER] About to call interaction.update()...');
         logger.info(`[ADMINTASK] About to update interaction with new embed...`);
         await interaction.update({ embeds: [embed], components: [actionRow] });
+        console.log('[FIRST HANDLER] interaction.update() completed successfully!');
         logger.info(`[ADMINTASK] Interaction updated successfully`);
 
         // Handle thread operations
+        console.log('[FIRST HANDLER] Now checking thread operations - task.thread_id:', task.thread_id, 'action:', action);
         logger.info(`[ADMINTASK] Checking thread operations for task ${taskId}, thread_id: ${task.thread_id}, action: ${action}`);
         if (task.thread_id) {
+          console.log('[FIRST HANDLER] Task HAS thread_id - proceeding with thread operations');
           logger.info(`[ADMINTASK] Task has thread_id, proceeding with thread operations`);
           try {
+            console.log('[FIRST HANDLER] Fetching thread from Discord...');
             logger.info(`[ADMINTASK] Fetching thread ${task.thread_id}...`);
             const thread = await interaction.guild.channels.fetch(task.thread_id);
+            console.log('[FIRST HANDLER] Thread fetched successfully:', thread ? thread.name : 'null');
             logger.info(`[ADMINTASK] Thread fetched:`, thread ? `${thread.name} (${thread.id})` : 'null');
             if (thread && thread.isThread()) {
               if (action === 'complete') {
