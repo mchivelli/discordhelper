@@ -1110,28 +1110,42 @@ View with \`/task list id:${taskId}\`.`
                 }
                 
                 // Add to changelog if current version exists
+                logger.info('[CHANGELOG] Checking for current changelog version...');
                 const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+                logger.info('[CHANGELOG] Current version:', currentVersion);
+                
                 if (currentVersion) {
                   try {
+                    logger.info(`[CHANGELOG] Adding task "${task.title}" to version ${currentVersion.version}`);
                     const entryId = `entry-${Date.now()}`;
-                    db.prepare(`
+                    
+                    const insertResult = db.prepare(`
                       INSERT INTO changelog_entries
                       (id, version, entry_type, entry_text, task_id, author_id, created_at)
                       VALUES (?, ?, ?, ?, ?, ?, ?)
                     `).run(entryId, currentVersion.version, 'task', task.title, taskId, interaction.user.id, Date.now());
                     
-                    logger.info(`Added task "${task.title}" to changelog version ${currentVersion.version}`);
+                    logger.info('[CHANGELOG] Insert result:', insertResult);
+                    logger.info(`[CHANGELOG] Successfully added task "${task.title}" to changelog version ${currentVersion.version}`);
                     
                     // Update changelog thread
                     const changelogCommand = interaction.client.commands.get('changelog');
+                    logger.info('[CHANGELOG] Changelog command found:', !!changelogCommand);
+                    
                     if (changelogCommand && changelogCommand.updateChangelogThread) {
+                      logger.info('[CHANGELOG] Updating changelog thread...');
                       await changelogCommand.updateChangelogThread(currentVersion.version, interaction.client);
+                      logger.info('[CHANGELOG] Thread updated successfully');
+                    } else {
+                      logger.warn('[CHANGELOG] Changelog command or updateChangelogThread not found');
                     }
                   } catch (changelogError) {
-                    logger.error('Error adding task to changelog:', changelogError);
+                    logger.error('[CHANGELOG] Error adding task to changelog:', changelogError);
+                    logger.error('[CHANGELOG] Error stack:', changelogError.stack);
                     // Don't fail the task completion if changelog fails
                   }
                 } else {
+                  logger.info('[CHANGELOG] No current version found, showing reminder');
                   // Remind user to set a changelog version
                   try {
                     await interaction.followUp({
@@ -1139,7 +1153,7 @@ View with \`/task list id:${taskId}\`.`
                       ephemeral: true
                     });
                   } catch (err) {
-                    // Ignore if followup fails
+                    logger.warn('[CHANGELOG] Could not send reminder:', err.message);
                   }
                 }
               } else if (action === 'reopen') {

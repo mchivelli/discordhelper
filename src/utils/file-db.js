@@ -973,6 +973,7 @@ function parseTableName(query) {
     // Use word boundaries to match complete table names
     const regex = new RegExp(`\\b${table}\\b`, 'i');
     if (regex.test(lowerQuery)) {
+      console.log(`[file-db] Parsed table name: ${table} from query: ${query.substring(0, 100)}...`);
       return table;
     }
   }
@@ -983,6 +984,7 @@ function parseTableName(query) {
     return null;
   }
   
+  console.warn(`[file-db] Could not parse table name from query: ${query.substring(0, 100)}...`);
   return null;
 }
 
