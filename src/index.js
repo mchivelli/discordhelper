@@ -1114,19 +1114,26 @@ View with \`/task list id:${taskId}\`.`
             console.log('[FIRST HANDLER] Thread fetched successfully:', thread ? thread.name : 'null');
             logger.info(`[ADMINTASK] Thread fetched:`, thread ? `${thread.name} (${thread.id})` : 'null');
             if (thread && thread.isThread()) {
+              console.log('[FIRST HANDLER] Thread is valid, processing action:', action);
               if (action === 'complete') {
+                console.log('[FIRST HANDLER] Action is COMPLETE - starting completion flow');
                 // Post completion message FIRST
                 const completionMsg = `✅ **Task Completed**\n` +
                   `Marked as complete by: <@${interaction.user.id}>\n` +
                   `Thread will be closed and archived.`;
+                console.log('[FIRST HANDLER] Sending completion message to thread...');
                 await thread.send(completionMsg);
+                console.log('[FIRST HANDLER] Completion message sent');
 
                 // Rename thread to "Complete: xxx"
                 const newThreadName = `Complete: ${task.title.substring(0, 90)}`;
+                console.log('[FIRST HANDLER] Attempting to rename thread to:', newThreadName);
                 try {
                   await thread.setName(newThreadName);
+                  console.log('[FIRST HANDLER] ✅ Thread renamed successfully!');
                   logger.info(`Renamed thread to: ${newThreadName}`);
                 } catch (err) {
+                  console.error('[FIRST HANDLER] ❌ FAILED to rename thread:', err);
                   logger.error('Could not rename thread:', err);
                 }
 
@@ -1147,8 +1154,10 @@ View with \`/task list id:${taskId}\`.`
                 }
                 
                 // Add to changelog if current version exists
+                console.log('[FIRST HANDLER] Now checking for changelog version...');
                 logger.info('[CHANGELOG] Checking for current changelog version...');
                 const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+                console.log('[FIRST HANDLER] Current changelog version:', currentVersion ? currentVersion.version : 'NONE');
                 logger.info('[CHANGELOG] Current version:', currentVersion);
                 
                 if (currentVersion) {
@@ -1173,6 +1182,18 @@ View with \`/task list id:${taskId}\`.`
                       logger.info('[CHANGELOG] Updating changelog thread...');
                       await changelogCommand.updateChangelogThread(currentVersion.version, interaction.client);
                       logger.info('[CHANGELOG] Thread updated successfully');
+                      
+                      // Post confirmation message in admin task thread with changelog link
+                      try {
+                        await thread.send(
+                          `✅ **Task Added to Changelog**\n` +
+                          `This task has been logged in version **${currentVersion.version}**\n` +
+                          `📋 View changelog: <#${currentVersion.thread_id}>`
+                        );
+                        logger.info('[CHANGELOG] Posted confirmation message to admin task thread');
+                      } catch (msgError) {
+                        logger.error('[CHANGELOG] Could not post confirmation message:', msgError);
+                      }
                     } else {
                       logger.warn('[CHANGELOG] Changelog command or updateChangelogThread not found');
                     }

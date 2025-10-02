@@ -691,6 +691,15 @@ class QueryBuilder {
           deletedCount++;
         }
       });
+    } else if (this.query.toLowerCase().includes('where version =')) {
+      // Handle DELETE FROM changelog_entries/changelog_versions WHERE version = ?
+      const version = args[0];
+      items.forEach(item => {
+        if (item.version === version) {
+          deleteItem(this.tableName, item.id);
+          deletedCount++;
+        }
+      });
     } else if (this.query.toLowerCase().includes('where id =')) {
       const id = args[0];
       if (deleteItem(this.tableName, id)) {

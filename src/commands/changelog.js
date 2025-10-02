@@ -148,10 +148,13 @@ module.exports = {
       // Get all changelog versions
       const versions = db.prepare('SELECT version FROM changelog_versions ORDER BY created_at DESC LIMIT 25').all();
       
-      const choices = versions.map(v => ({
-        name: v.version,
-        value: v.version
-      }));
+      // Filter out invalid versions and create choices
+      const choices = versions
+        .filter(v => v && v.version) // Only include versions with valid version field
+        .map(v => ({
+          name: String(v.version),
+          value: String(v.version)
+        }));
       
       if (choices.length === 0) {
         choices.push({
