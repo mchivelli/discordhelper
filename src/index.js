@@ -886,15 +886,23 @@ View with \`/task list id:${taskId}\`.`
     
     // Handle admin task buttons
     if (['admintask'].includes(buttonAction)) {
+      console.log('═══════════════════════════════════════');
+      console.log('[FIRST HANDLER] Admin task button clicked!');
+      console.log('[FIRST HANDLER] Button customId:', interaction.customId);
+      console.log('[FIRST HANDLER] Button action:', buttonAction);
+      console.log('═══════════════════════════════════════');
       handledByFirstHandler = true;
       try {
         const action = customIdParts[1]; // complete | progress | reopen | claim
         const taskId = customIdParts.slice(2).join('_');
+        console.log('[FIRST HANDLER] Parsed action:', action, 'taskId:', taskId);
         const db = require('./utils/db');
         const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
         // Get task from database
+        console.log('[FIRST HANDLER] About to fetch task from database...');
         const task = db.prepare('SELECT * FROM admin_tasks WHERE task_id = ?').get(taskId);
+        console.log('[FIRST HANDLER] Task fetched:', task ? `Found: ${task.title}` : 'NOT FOUND');
         if (!task) {
           return interaction.reply({ content: '❌ Task not found.', ephemeral: true });
         }
@@ -1955,10 +1963,16 @@ Add stages manually with \`/task add-stage\`.`,
       
       // Handle admin task buttons
       if (oldAction === 'admintask') {
+        console.log('▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼');
+        console.log('[SECOND HANDLER] Admin task button clicked!');
+        console.log('[SECOND HANDLER] Button customId:', interaction.customId);
+        console.log('[SECOND HANDLER] oldAction:', oldAction);
+        console.log('▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼');
         const action = parts[1]; // complete, progress, reopen
         const taskId = parts[2];
         
         // DEBUG: Log button interaction details
+        console.log('[SECOND HANDLER] Parsed action:', action, 'taskId:', taskId);
         logger.info(`[ADMINTASK DEBUG] Button pressed: ${interaction.customId}`);
         logger.info(`[ADMINTASK DEBUG] Parsed action: ${action}, taskId: ${taskId}`);
         logger.info(`[ADMINTASK DEBUG] User: ${interaction.user.tag} (${interaction.user.id})`);
