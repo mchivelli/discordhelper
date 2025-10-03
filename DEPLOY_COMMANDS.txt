@@ -1,0 +1,57 @@
+# 🚀 DEPLOYMENT COMMANDS FOR UBUNTU SERVER
+
+## Step 1: Pull Latest Code
+cd /home/root/discord-bot/discordhelper
+git pull origin main
+
+## Step 2: Update TODO Channel ID (CRITICAL!)
+nano src/commands/admintasks.js
+# Change line 7 to:
+# const TODO_CHANNEL_ID = '1423556792860020756';
+# Save: Ctrl+O, Enter, Ctrl+X
+
+## Step 3: Restart Bot
+pm2 restart discordhelper
+# OR if using Docker:
+# docker restart discordhelper
+
+## Step 4: Check Logs
+pm2 logs discordhelper --lines 50
+# Verify no errors, look for:
+# "Initializing chat_summaries table..."
+# "Using file-based database at: /app/data"
+
+## Step 5: Run Recovery Command in Discord
+/admintasks recover channel_id:1423556792860020756
+# Wait ~16 seconds for all 33 tasks to be recovered
+
+## Step 6: Test Everything
+
+# Test Admin Tasks:
+/admintasks list
+# Should show all recovered tasks
+
+# Test Summarization:
+/summarize fetch_history days:1
+/summarize channel hours:24
+/summarize history days:7
+
+# Test Changelog:
+/changelog setversion 1.0.0
+# Create and complete a test task
+# Verify it appears in changelog with thread link
+
+# Test Issue Tracking:
+/issue report
+# Test buttons work
+
+## Step 7: Verify
+# Check all 33 tasks are visible in new TODO channel
+# Click a task button to verify functionality
+# Check thread links work in changelog
+
+## Rollback (if needed)
+git log --oneline -5
+git revert HEAD
+git push
+pm2 restart discordhelper

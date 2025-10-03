@@ -169,6 +169,18 @@ CREATE TABLE IF NOT EXISTS changelog_entries (
   FOREIGN KEY(version) REFERENCES changelog_versions(version) ON DELETE CASCADE,
   FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS admin_task_thread_messages (
+  message_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  author_tag TEXT NOT NULL,
+  content TEXT NOT NULL,
+  timestamp INTEGER NOT NULL,
+  attachments TEXT,
+  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
+);
 `);
 // Export our file-based database implementation
 module.exports = db;

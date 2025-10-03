@@ -303,6 +303,37 @@ client.on(Events.ClientReady, () => {
   } else {
     logger.warn('No valid SUMMARY_CRON expression provided, skipping daily chat summarization');
   }
+
+  // Set up automatic message cleanup for retention policy
+  const retentionDays = parseInt(process.env.MESSAGE_RETENTION_DAYS) || 30;
+  const cleanupCronExpression = process.env.MESSAGE_CLEANUP_CRON || '0 3 * * *'; // 3 AM daily
+  
+  if (cleanupCronExpression && cleanupCronExpression.trim() && retentionDays > 0) {
+    try {
+      cron.schedule(cleanupCronExpression, () => {
+        logger.info('Starting automatic message cleanup...');
+        
+        try {
+          const cutoffTime = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
+          const result = db.prepare('DELETE FROM chat_messages WHERE timestamp < ?').run(cutoffTime);
+          
+          if (result.changes > 0) {
+            logger.info(`✅ Message cleanup complete: Deleted ${result.changes} messages older than ${retentionDays} days`);
+          } else {
+            logger.info('✅ Message cleanup complete: No old messages to delete');
+          }
+        } catch (error) {
+          logger.error('Error during message cleanup:', error);
+        }
+      });
+      
+      logger.info(`Message cleanup scheduled: Will delete messages older than ${retentionDays} days at ${cleanupCronExpression}`);
+    } catch (error) {
+      logger.error('Failed to set up message cleanup cron job:', error);
+    }
+  } else {
+    logger.warn('Message cleanup disabled (MESSAGE_RETENTION_DAYS=0 or no cron expression)');
+  }
   
   logger.info('✅ Bot is ready to handle interactions - Chat summarization is active!');
   console.log('ClientReady handler completed');
@@ -2782,8 +2813,8 @@ console.log('Interaction handler setup complete');
 // Add message listener for chat summarization
 console.log('Setting up message handler...');
 client.on(Events.MessageCreate, async message => {
-  // Skip bot messages and DMs
-  if (message.author.bot || !message.guild) {
+  // Skip DMs only (we still want to archive bot messages in threads)
+  if (!message.guild) {
     return;
   }
 
@@ -2793,10 +2824,63 @@ client.on(Events.MessageCreate, async message => {
     return;
   }
 
+  // ALWAYS archive admin task thread messages regardless of source channel filtering
+  let archivedToAdminTask = false;
+  let isChangelogThread = false;
   try {
-    storeChatMessage(db, message);
-  } catch (error) {
-    logger.error('Error storing message for chat summary:', error);
+    const isThread = typeof message.channel.isThread === 'function' && message.channel.isThread();
+    if (isThread) {
+      // Find admin task for this thread
+      const allTasks = db.prepare('SELECT * FROM admin_tasks').all();
+      const adminTask = allTasks.find(t => t && t.thread_id === message.channel.id);
+      if (adminTask) {
+        const attachments = message.attachments?.size > 0
+          ? JSON.stringify(Array.from(message.attachments.values()).map(a => ({ url: a.url, name: a.name, size: a.size })))
+          : null;
+        db.prepare(`
+          INSERT OR REPLACE INTO admin_task_thread_messages 
+          (message_id, task_id, thread_id, author_id, author_tag, content, timestamp, attachments)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          message.id,
+          adminTask.task_id,
+          message.channel.id,
+          message.author.id,
+          message.author.tag,
+          message.content || '',
+          message.createdTimestamp,
+          attachments
+        );
+        archivedToAdminTask = true;
+      }
+
+      // Detect changelog thread and exclude from general chat storage
+      try {
+        const versions = db.prepare('SELECT * FROM changelog_versions').all();
+        isChangelogThread = Array.isArray(versions) && versions.some(v => v && v.thread_id === message.channel.id);
+      } catch {}
+    }
+  } catch (err) {
+    logger.warn('Failed to archive admin task thread message:', err);
+  }
+
+  // OPTIMIZATION: Only store general chat messages from configured source channels (if specified)
+  const sourceChannelsEnv = process.env.DAILY_SUMMARY_SOURCE_CHANNELS;
+  if (!archivedToAdminTask && !isChangelogThread && sourceChannelsEnv) {
+    const sourceChannels = sourceChannelsEnv.split(',').map(s => s.trim()).filter(Boolean);
+    if (sourceChannels.length > 0 && !sourceChannels.includes(message.channel.id)) {
+      // Skip general storage for non-source channels
+      return;
+    }
+  }
+
+  // Store general chat messages (exclude bot messages)
+  if (!archivedToAdminTask && !isChangelogThread && !message.author.bot) {
+    try {
+      storeChatMessage(db, message);
+    } catch (error) {
+      logger.error('Error storing message for chat summary:', error);
+    }
   }
 });
 console.log('Message handler setup complete');

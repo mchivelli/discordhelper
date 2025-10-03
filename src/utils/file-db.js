@@ -29,7 +29,8 @@ const TABLES = {
   admin_task_assignees: path.join(DB_ROOT, 'admin_task_assignees'),
   simple_tasks: path.join(DB_ROOT, 'simple_tasks'),
   changelog_versions: path.join(DB_ROOT, 'changelog_versions'),
-  changelog_entries: path.join(DB_ROOT, 'changelog_entries')
+  changelog_entries: path.join(DB_ROOT, 'changelog_entries'),
+  admin_task_thread_messages: path.join(DB_ROOT, 'admin_task_thread_messages')
 };
 
 // Ensure all table directories exist
@@ -50,7 +51,8 @@ const cache = {
   admin_task_assignees: new Map(),
   simple_tasks: new Map(),
   changelog_versions: new Map(),
-  changelog_entries: new Map()
+  changelog_entries: new Map(),
+  admin_task_thread_messages: new Map()
 };
 
 /**
@@ -410,6 +412,35 @@ class QueryBuilder {
         return filtered;
       }
 
+      // Special handling for admin_task_thread_messages queries
+      if (this.tableName === 'admin_task_thread_messages') {
+        const q = this.query.toLowerCase();
+        let idx = 0;
+        let filtered = items;
+        
+        if (q.includes('task_id =')) {
+          const taskId = params[idx++];
+          filtered = filtered.filter(item => item.task_id === taskId);
+        }
+        if (q.includes('thread_id =')) {
+          const threadId = params[idx++];
+          filtered = filtered.filter(item => item.thread_id === threadId);
+        }
+        
+        if (q.includes('order by timestamp desc')) {
+          filtered.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        } else if (q.includes('order by timestamp asc')) {
+          filtered.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        }
+        
+        if (q.includes('limit ?')) {
+          const limit = params[params.length - 1];
+          filtered = filtered.slice(0, typeof limit === 'number' ? limit : 0);
+        }
+        
+        return filtered;
+      }
+
       let filtered = items;
       
       // Handle changelog_versions queries
@@ -697,6 +728,22 @@ class QueryBuilder {
             };
           }
           break;
+        case 'admin_task_thread_messages':
+          // Positional: message_id, task_id, thread_id, author_id, author_tag, content, timestamp, attachments
+          if (args.length >= 7) {
+            item = {
+              id: args[0], // use message_id as file id
+              message_id: args[0],
+              task_id: args[1],
+              thread_id: args[2],
+              author_id: args[3],
+              author_tag: args[4],
+              content: args[5] || '',
+              timestamp: args[6] || Date.now(),
+              attachments: args[7] || null
+            };
+          }
+          break;
       }
     }
     
@@ -719,6 +766,19 @@ class QueryBuilder {
     const items = loadTable(this.tableName);
     let deletedCount = 0;
     
+    // Handle chat_messages retention cleanup
+    if (this.tableName === 'chat_messages' && this.query.toLowerCase().includes('timestamp <')) {
+      const cutoff = args[0];
+      items.forEach(item => {
+        const ts = item.timestamp || 0;
+        if (ts < cutoff) {
+          deleteItem(this.tableName, item.id);
+          deletedCount++;
+        }
+      });
+      return { changes: deletedCount };
+    }
+
     if (this.query.toLowerCase().includes('where task_id =')) {
       const taskId = args[0];
       items.forEach(item => {

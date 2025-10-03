@@ -548,6 +548,65 @@ module.exports = {
             await thread.send(`${mentions} - You are assigned to this task.`);
           }
 
+          // Replay archived thread messages (if available)
+          try {
+            let archived = db.prepare(
+              'SELECT * FROM admin_task_thread_messages WHERE task_id = ? ORDER BY timestamp ASC'
+            ).all(task.task_id);
+
+            // Fallback: use chat_messages from the old thread if no dedicated archive exists
+            if ((!archived || archived.length === 0) && task.thread_id) {
+              try {
+                archived = db.prepare(
+                  'SELECT * FROM chat_messages WHERE guild_id = ? AND channel_id = ? ORDER BY timestamp ASC'
+                ).all(task.guild_id, task.thread_id);
+              } catch (fallbackErr) {
+                logger.warn('Fallback fetch of chat_messages failed:', fallbackErr);
+              }
+            }
+
+            if (archived && archived.length > 0) {
+              await thread.send(`📦 Replaying ${archived.length} archived message(s) from the original thread...`);
+
+              const sendChunked = async (text) => {
+                const maxLen = 1900; // Leave margin under 2000
+                if (!text) return;
+                if (text.length <= maxLen) {
+                  await thread.send({ content: text });
+                  return;
+                }
+                for (let i = 0; i < text.length; i += maxLen) {
+                  await thread.send({ content: text.slice(i, i + maxLen) });
+                  await new Promise(r => setTimeout(r, 150));
+                }
+              };
+
+              for (const m of archived) {
+                try {
+                  const authorId = m.author_id || m.user_id || 'unknown';
+                  const authorTag = m.author_tag || m.username || 'unknown';
+                  const ts = Math.floor(((m.timestamp || Date.now()) / 1000));
+                  const header = `<t:${ts}:f> • <@${authorId}> (${authorTag})`;
+                  const content = (m.content || '').toString();
+                  let attachmentsText = '';
+                  try {
+                    const atts = typeof m.attachments === 'string' ? JSON.parse(m.attachments) : (m.attachments || []);
+                    if (Array.isArray(atts) && atts.length > 0) {
+                      attachmentsText = '\n' + atts.map(a => `🔗 ${a.name || 'file'}: ${a.url}`).join('\n');
+                    }
+                  } catch {}
+                  const text = `${header}\n${content}${attachmentsText}`.trim();
+                  await sendChunked(text);
+                  await new Promise(r => setTimeout(r, 150));
+                } catch (replayErr) {
+                  logger.warn('Failed to replay an archived message:', replayErr);
+                }
+              }
+            }
+          } catch (archiveErr) {
+            logger.warn('Error during thread message replay:', archiveErr);
+          }
+
           if (task.status === 'complete') {
             await thread.setLocked(true).catch(() => {});
             await thread.setArchived(true).catch(() => {});
