@@ -325,23 +325,27 @@ module.exports = {
       const userId = interaction.user.id;
       const statusFilter = interaction.options.getString('status') || 'all';
       
-      // Get tasks assigned to this user
-      let query = `
-        SELECT t.*, GROUP_CONCAT(a.user_id) as assignees
-        FROM admin_tasks t
-        JOIN admin_task_assignees a ON t.task_id = a.task_id
-        WHERE a.user_id = ?
-      `;
-      const params = [userId];
+      // Get task IDs assigned to this user (file-db compatible)
+      const assignments = db.prepare('SELECT task_id FROM admin_task_assignees WHERE user_id = ?').all(userId);
       
-      if (statusFilter !== 'all') {
-        query += ' AND t.status = ?';
-        params.push(statusFilter);
+      if (assignments.length === 0) {
+        const statusText = statusFilter === 'all' ? 'any status' : statusFilter.replace('_', ' ');
+        return interaction.editReply(`📋 You have no admin tasks assigned with ${statusText}.`);
       }
       
-      query += ' GROUP BY t.task_id ORDER BY t.created_at DESC';
+      // Get all tasks assigned to user
+      const taskIds = assignments.map(a => a.task_id);
+      const allTasks = db.prepare('SELECT * FROM admin_tasks').all();
       
-      const tasks = db.prepare(query).all(...params);
+      // Filter tasks by assignment and status
+      let tasks = allTasks.filter(t => taskIds.includes(t.task_id));
+      
+      if (statusFilter !== 'all') {
+        tasks = tasks.filter(t => t.status === statusFilter);
+      }
+      
+      // Sort by created_at DESC
+      tasks.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
 
       if (tasks.length === 0) {
         const statusText = statusFilter === 'all' ? 'any status' : statusFilter.replace('_', ' ');
