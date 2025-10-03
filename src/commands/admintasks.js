@@ -4,7 +4,7 @@ const logger = require('../utils/logger');
 const fs = require('fs');
 const path = require('path');
 
-const TODO_CHANNEL_ID = '1292819438370033685';
+const TODO_CHANNEL_ID = '1423602697684254791';
 
 module.exports = {
   data: new SlashCommandBuilder()
