@@ -653,10 +653,28 @@ class QueryBuilder {
           }
           break;
         case 'admin_tasks':
-          // Positional: task_id, title, description, status, creator_id, thread_id, channel_id, message_id, guild_id, created_at
-          if (args.length >= 6) {
+          // Handle both INSERT formats:
+          // Initial INSERT (8 params): task_id, title, description, status, creator_id, channel_id, guild_id, created_at
+          // Full INSERT (10 params): task_id, title, description, status, creator_id, thread_id, channel_id, message_id, guild_id, created_at
+          if (args.length === 8) {
+            // Initial INSERT without thread_id (added later via UPDATE)
             item = {
-              id: args[0], // Use task_id as id
+              id: args[0],
+              task_id: args[0],
+              title: args[1],
+              description: args[2],
+              status: args[3] || 'in_progress',
+              creator_id: args[4],
+              thread_id: null, // Will be set via UPDATE
+              channel_id: args[5],
+              message_id: null,
+              guild_id: args[6],
+              created_at: args[7] || Date.now()
+            };
+          } else if (args.length >= 10) {
+            // Full INSERT with thread_id
+            item = {
+              id: args[0],
               task_id: args[0],
               title: args[1],
               description: args[2],

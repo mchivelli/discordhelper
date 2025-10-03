@@ -667,13 +667,13 @@ module.exports = {
               const adminTask = db.prepare('SELECT thread_id, guild_id FROM admin_tasks WHERE task_id = ?').get(entry.task_id);
               if (adminTask && adminTask.thread_id && adminTask.guild_id) {
                 const url = `https://discord.com/channels/${adminTask.guild_id}/${adminTask.thread_id}`;
-                threadLink = ` | 🧵 [Thread](${url})`;
+                threadLink = `\n   🧵 **[View Thread →](${url})**`;
               }
             } catch (err) {
               logger.warn(`Could not fetch thread for task ${entry.task_id}:`, err);
             }
           }
-          taskSection += `✅ **${entry.entry_text}**\n   → By: <@${entry.author_id}> | ${dateStr}${threadLink}\n\n`;
+          taskSection += `✅ **${entry.entry_text}**\n   👤 <@${entry.author_id}> • 📅 ${dateStr}${threadLink}\n\n`;
           taskCount++;
         } else if (entry.entry_type === 'manual') {
           manualSection += `• ${entry.entry_text}\n`;

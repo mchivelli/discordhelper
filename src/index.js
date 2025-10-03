@@ -975,7 +975,12 @@ View with \`/task list id:${taskId}\`.`
                 try { if (versionThread.locked) await versionThread.setLocked(false); } catch {}
                 const ts = Math.floor(Date.now() / 1000);
                 const threadLink = task.thread_id ? `https://discord.com/channels/${interaction.guildId}/${task.thread_id}` : 'N/A';
-                const entryLine = `✅ **${task.title}**\n   → By: <@${interaction.user.id}> | <t:${ts}:f> | 🧵 [Thread](${threadLink})`;
+                const entryLine = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `✅ **${task.title}**\n` +
+                  `👤 Completed by: <@${interaction.user.id}>\n` +
+                  `📅 Date: <t:${ts}:f>\n` +
+                  `🧵 **[View Task Thread →](${threadLink})**\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
                 await versionThread.send({ content: entryLine });
               }
             } catch (postErr) {
@@ -1233,13 +1238,6 @@ View with \`/task list id:${taskId}\`.`
               console.log('[FIRST HANDLER] Thread is valid, processing action:', action);
               if (action === 'complete') {
                 console.log('[FIRST HANDLER] Action is COMPLETE - starting completion flow');
-                // Post completion message FIRST
-                const completionMsg = `✅ **Task Completed**\n` +
-                  `Marked as complete by: <@${interaction.user.id}>\n` +
-                  `Thread will be closed and archived.`;
-                console.log('[FIRST HANDLER] Sending completion message to thread...');
-                await thread.send(completionMsg);
-                console.log('[FIRST HANDLER] Completion message sent');
 
                 // Rename thread to "[Complete] Task: xxx"
                 // Discord thread name limit is 100 chars
@@ -1255,6 +1253,15 @@ View with \`/task list id:${taskId}\`.`
                   await thread.setName(newThreadName);
                   console.log('[FIRST HANDLER] ✅ Thread renamed successfully!');
                   logger.info(`Renamed thread to: ${newThreadName}`);
+                  
+                  // Post completion message AFTER successful rename
+                  const completionMsg = `✅ **Task Completed**\n` +
+                    `Marked as complete by: <@${interaction.user.id}>\n` +
+                    `Thread renamed to: **${newThreadName}**\n` +
+                    `Thread will be locked and archived.`;
+                  console.log('[FIRST HANDLER] Sending completion message to thread...');
+                  await thread.send(completionMsg);
+                  console.log('[FIRST HANDLER] Completion message sent');
                 } catch (err) {
                   console.error('[FIRST HANDLER] ❌ FAILED to rename thread:', err);
                   logger.error('Could not rename thread:', err);
@@ -1266,6 +1273,13 @@ View with \`/task list id:${taskId}\`.`
                     threadArchived: thread.archived,
                     threadLocked: thread.locked
                   });
+                  
+                  // Post completion message even if rename failed
+                  const completionMsg = `✅ **Task Completed**\n` +
+                    `Marked as complete by: <@${interaction.user.id}>\n` +
+                    `⚠️ Could not rename thread (check bot permissions)\n` +
+                    `Thread will be locked and archived.`;
+                  await thread.send(completionMsg).catch(() => {});
                 }
 
                 // Lock the thread BEFORE archiving (Discord requirement)
