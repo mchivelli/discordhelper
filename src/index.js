@@ -1270,7 +1270,8 @@ View with \`/task list id:${taskId}\`.`
                     try { if (versionThread.archived) await versionThread.setArchived(false); } catch {}
                     try { if (versionThread.locked) await versionThread.setLocked(false); } catch {}
                     const ts = Math.floor(Date.now() / 1000);
-                    const entryLine = `✅ **${task.title}**\n   → By: <@${interaction.user.id}> | <t:${ts}:f> | 🧵 <#${task.thread_id}>`;
+                    const threadLink = task.thread_id ? `https://discord.com/channels/${interaction.guildId}/${task.thread_id}` : 'N/A';
+                    const entryLine = `✅ **${task.title}**\n   → By: <@${interaction.user.id}> | <t:${ts}:f> | 🧵 [Thread](${threadLink})`;
                     await versionThread.send({ content: entryLine });
                   }
                 } catch (postErr) {

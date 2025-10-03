@@ -664,9 +664,10 @@ module.exports = {
           let threadLink = '';
           if (entry.task_id) {
             try {
-              const adminTask = db.prepare('SELECT thread_id FROM admin_tasks WHERE task_id = ?').get(entry.task_id);
-              if (adminTask && adminTask.thread_id) {
-                threadLink = ` | 🧵 <#${adminTask.thread_id}>`;
+              const adminTask = db.prepare('SELECT thread_id, guild_id FROM admin_tasks WHERE task_id = ?').get(entry.task_id);
+              if (adminTask && adminTask.thread_id && adminTask.guild_id) {
+                const url = `https://discord.com/channels/${adminTask.guild_id}/${adminTask.thread_id}`;
+                threadLink = ` | 🧵 [Thread](${url})`;
               }
             } catch (err) {
               logger.warn(`Could not fetch thread for task ${entry.task_id}:`, err);
