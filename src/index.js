@@ -1205,7 +1205,26 @@ View with \`/task list id:${taskId}\`.`
                     logger.info('[CHANGELOG] Insert result:', insertResult);
                     logger.info(`[CHANGELOG] Successfully added task "${task.title}" to changelog version ${currentVersion.version}`);
                     
-                    // Update changelog thread
+                    // Post a direct entry line to the active changelog version thread (guaranteed visible log)
+                    try {
+                      const versionThread = await interaction.client.channels.fetch(currentVersion.thread_id).catch(() => null);
+                      if (versionThread && versionThread.isThread()) {
+                        // Unarchive/unlock if needed to allow posting
+                        try { if (versionThread.archived) await versionThread.setArchived(false); } catch {}
+                        try { if (versionThread.locked) await versionThread.setLocked(false); } catch {}
+
+                        const ts = Math.floor(Date.now() / 1000);
+                        const entryLine = `✅ **${task.title}**\n   → By: <@${interaction.user.id}> | <t:${ts}:f> | 🧵 <#${task.thread_id}>`;
+                        await versionThread.send({ content: entryLine });
+                        logger.info('[CHANGELOG] Posted direct entry to changelog thread');
+                      } else {
+                        logger.warn('[CHANGELOG] Could not fetch changelog version thread to post direct entry');
+                      }
+                    } catch (postErr) {
+                      logger.error('[CHANGELOG] Failed to post direct entry to changelog thread:', postErr);
+                    }
+
+                    // Update changelog thread summary
                     const changelogCommand = interaction.client.commands.get('changelog');
                     logger.info('[CHANGELOG] Changelog command found:', !!changelogCommand);
                     

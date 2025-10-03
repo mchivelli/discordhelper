@@ -708,6 +708,9 @@ module.exports = {
       // Fetch thread and update
       const thread = await client.channels.fetch(versionData.thread_id).catch(() => null);
       if (thread && thread.isThread()) {
+        // Ensure thread is open for posting
+        try { if (thread.archived) await thread.setArchived(false); } catch {}
+        try { if (thread.locked) await thread.setLocked(false); } catch {}
         // Send as new message (threads don't allow editing starter message)
         const messages = await thread.messages.fetch({ limit: 10 });
         const botMessages = messages.filter(m => m.author.id === client.user.id && m.content.startsWith('📋 **Changelog:'));

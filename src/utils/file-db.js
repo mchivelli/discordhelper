@@ -821,11 +821,31 @@ class QueryBuilder {
     if (this.tableName === 'changelog_versions') {
       // UPDATE changelog_versions SET status = ?, is_current = ?, completed_at = ?, completion_report = ? WHERE version = ?
       if (this.query.toLowerCase().includes('set status') && this.query.toLowerCase().includes('where version =')) {
-        const status = args[0];
-        const isCurrent = args[1];
-        const completedAt = args[2];
-        const completionReport = args[3];
-        const version = args[4];
+        let status, isCurrent, completedAt, completionReport, version;
+        const q = this.query.toLowerCase();
+        if (q.includes('status = ?') || q.includes('is_current = ?')) {
+          // Parametrized form: status=?, is_current=?, completed_at=?, completion_report=?, WHERE version=?
+          status = args[0];
+          isCurrent = args[1];
+          completedAt = args[2];
+          completionReport = args[3];
+          version = args[4];
+        } else if (q.includes("status = 'complete'") && q.includes('is_current = 0') && q.includes('completed_at = ?') && q.includes('completion_report = ?')) {
+          // Literal form: status='complete', is_current=0, completed_at=?, completion_report=?, WHERE version=?
+          status = 'complete';
+          isCurrent = 0;
+          completedAt = args[0];
+          completionReport = args[1];
+          version = args[2];
+        } else {
+          // Fallback best-effort parse: attempt to map last arg as version
+          completedAt = args[0];
+          completionReport = args[1];
+          version = args[2];
+          // try to infer status/isCurrent literals
+          status = q.includes("status = 'complete'") ? 'complete' : 'open';
+          isCurrent = q.includes('is_current = 0') ? 0 : (q.includes('is_current = 1') ? 1 : 0);
+        }
         
         const item = items.find(i => i.version === version);
         if (item) {
