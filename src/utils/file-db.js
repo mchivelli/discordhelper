@@ -1012,6 +1012,16 @@ class QueryBuilder {
         saveItem(this.tableName, item);
         updatedCount = 1;
       }
+    } else if (this.query.toLowerCase().includes('set thread_id =') && this.query.toLowerCase().includes('where task_id =')) {
+      // Handle: UPDATE admin_tasks SET thread_id = ? WHERE task_id = ?
+      const threadId = args[0];
+      const taskId = args[1];
+      const item = items.find(i => i.task_id === taskId);
+      if (item) {
+        item.thread_id = threadId;
+        saveItem(this.tableName, item);
+        updatedCount = 1;
+      }
     } else if (this.query.toLowerCase().includes('set message_id =') && this.query.toLowerCase().includes('where task_id =')) {
       // Handle: UPDATE admin_tasks SET message_id = ? WHERE task_id = ?
       const messageId = args[0];
