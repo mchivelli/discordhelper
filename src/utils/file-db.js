@@ -628,20 +628,18 @@ class QueryBuilder {
           }
           break;
         case 'changelog_versions':
-          // Positional: version, thread_id, channel_id, guild_id, status, is_current, created_by, created_at
+          // Positional: version, thread_id, channel_id, guild_id, status, is_current, created_by, created_at, message_id (optional)
           if (args.length >= 8) {
             item = {
-              id: args[0], // Use version as id
               version: args[0],
               thread_id: args[1],
               channel_id: args[2],
               guild_id: args[3],
-              status: args[4] || 'open',
-              is_current: args[5] || 0,
+              status: args[4],
+              is_current: args[5],
               created_by: args[6],
-              created_at: args[7] || Date.now(),
-              completed_at: null,
-              completion_report: null
+              created_at: args[7],
+              message_id: args.length >= 9 ? args[8] : null // Optional message_id
             };
           }
           break;

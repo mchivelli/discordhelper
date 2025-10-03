@@ -454,11 +454,11 @@ module.exports = {
         reason: `Changelog version ${version} created by ${interaction.user.tag}`
       });
       
-      // Store in database
+      // Store in database with message_id
       db.prepare(`
         INSERT INTO changelog_versions 
-        (version, thread_id, channel_id, guild_id, status, is_current, created_by, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (version, thread_id, channel_id, guild_id, status, is_current, created_by, created_at, message_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         version,
         thread.id,
@@ -467,7 +467,8 @@ module.exports = {
         'open',
         1, // Set as current
         interaction.user.id,
-        Date.now()
+        Date.now(),
+        message.id // Store the starter message ID
       );
       
       // Send welcome message with complete button in thread
@@ -659,7 +660,19 @@ module.exports = {
         const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
         
         if (entry.entry_type === 'task') {
-          taskSection += `✅ **${entry.entry_text}**\n   → By: <@${entry.author_id}> | ${dateStr}\n\n`;
+          // Fetch the admin task thread_id if task_id is present
+          let threadLink = '';
+          if (entry.task_id) {
+            try {
+              const adminTask = db.prepare('SELECT thread_id FROM admin_tasks WHERE task_id = ?').get(entry.task_id);
+              if (adminTask && adminTask.thread_id) {
+                threadLink = ` | 🧵 <#${adminTask.thread_id}>`;
+              }
+            } catch (err) {
+              logger.warn(`Could not fetch thread for task ${entry.task_id}:`, err);
+            }
+          }
+          taskSection += `✅ **${entry.entry_text}**\n   → By: <@${entry.author_id}> | ${dateStr}${threadLink}\n\n`;
           taskCount++;
         } else if (entry.entry_type === 'manual') {
           manualSection += `• ${entry.entry_text}\n`;
@@ -779,13 +792,39 @@ module.exports = {
     }
     
     try {
-      // Delete the thread if it exists
+      let threadDeleted = false;
+      let starterMessageDeleted = false;
+      
+      // Delete the starter message first if we have the message_id
+      if (versionData.message_id && versionData.channel_id) {
+        try {
+          const channel = await interaction.guild.channels.fetch(versionData.channel_id).catch(() => null);
+          if (channel) {
+            const message = await channel.messages.fetch(versionData.message_id).catch(() => null);
+            if (message) {
+              await message.delete();
+              starterMessageDeleted = true;
+              logger.info(`Deleted starter message for version ${version}`);
+            }
+          }
+        } catch (msgErr) {
+          logger.warn(`Could not delete starter message for version ${version}:`, msgErr);
+        }
+      }
+      
+      // Delete the thread if it exists (this also deletes the message if not already deleted)
       if (versionData.thread_id) {
         try {
-          const thread = await interaction.guild.channels.fetch(versionData.thread_id);
-          if (thread) {
+          const thread = await interaction.guild.channels.fetch(versionData.thread_id).catch(() => null);
+          if (thread && thread.isThread()) {
             await thread.delete('Changelog version deleted');
+            threadDeleted = true;
             logger.info(`Deleted changelog thread for version ${version}`);
+            
+            // If we didn't delete the message earlier, it's gone now with the thread
+            if (!starterMessageDeleted) {
+              starterMessageDeleted = true;
+            }
           }
         } catch (error) {
           logger.warn(`Could not delete thread for version ${version}:`, error);
@@ -799,10 +838,14 @@ module.exports = {
       // Delete the version record
       db.prepare('DELETE FROM changelog_versions WHERE version = ?').run(version);
       
+      const statusMsg = [];
+      if (threadDeleted) statusMsg.push('Thread deleted');
+      if (starterMessageDeleted) statusMsg.push('Starter message removed');
+      statusMsg.push(`${entriesDeleted.changes || 0} entries removed`);
+      statusMsg.push('Version record deleted');
+      
       return interaction.editReply(`✅ **Changelog version ${version} deleted successfully!**\n` +
-        `- Thread deleted\n` +
-        `- ${entriesDeleted.changes} entries removed\n` +
-        `- Version record deleted`);
+        statusMsg.map(s => `- ${s}`).join('\n'));
     } catch (error) {
       logger.error('Error deleting changelog version:', error);
       return interaction.editReply(`❌ Error deleting version: ${error.message}`);

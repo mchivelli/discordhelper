@@ -1125,8 +1125,8 @@ View with \`/task list id:${taskId}\`.`
                 await thread.send(completionMsg);
                 console.log('[FIRST HANDLER] Completion message sent');
 
-                // Rename thread to "Complete: xxx"
-                const newThreadName = `Complete: ${task.title.substring(0, 90)}`;
+                // Rename thread to "[Complete] Task: xxx"
+                const newThreadName = `[Complete] Task: ${task.title.substring(0, 80)}`;
                 console.log('[FIRST HANDLER] Attempting to rename thread to:', newThreadName);
                 try {
                   await thread.setName(newThreadName);
