@@ -853,50 +853,70 @@ module.exports = {
         return interaction.editReply('📋 No admin tasks found to audit.');
       }
 
+      const start = Date.now();
+      const maxMs = 20000; // 20s budget to avoid "thinking" forever
+      const withTimeout = async (p, ms = 5000) => {
+        return Promise.race([
+          p,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+        ]).catch(() => null);
+      };
+      const updateProgress = async (text) => {
+        try { await interaction.editReply(text); } catch {}
+      };
+
       let foundById = 0, foundByMsg = 0, foundByParent = 0, foundByScan = 0, missing = 0;
       const missingList = [];
 
-      for (const task of tasks) {
+      for (let idx = 0; idx < tasks.length; idx++) {
+        const task = tasks[idx];
         let thread = null;
+        if ((Date.now() - start) > maxMs) {
+          logger.warn('auditThreads time budget exceeded, finishing early');
+          break;
+        }
+        if ((idx % 5) === 0) {
+          await updateProgress(`🔎 Auditing tasks... (${idx}/${tasks.length})\nFound by id: ${foundById}, by msg: ${foundByMsg}, by parent: ${foundByParent}, by scan: ${foundByScan}, missing: ${missing}`);
+        }
         // By stored thread_id
         if (task.thread_id) {
-          thread = await interaction.guild.channels.fetch(task.thread_id).catch(() => null);
+          thread = await withTimeout(interaction.guild.channels.fetch(task.thread_id));
           if (thread && !thread.isThread()) thread = null; else if (thread) { foundById++; continue; }
         }
 
         // By parent message
-        if (!thread && task.channel_id && task.message_id) {
+        if (!thread && task.channel_id && task.message_id && (Date.now() - start) < maxMs) {
           try {
-            const parent = await interaction.guild.channels.fetch(task.channel_id).catch(() => null);
-            const msg = parent ? await parent.messages.fetch(task.message_id).catch(() => null) : null;
+            const parent = await withTimeout(interaction.guild.channels.fetch(task.channel_id));
+            const msg = parent ? await withTimeout(parent.messages.fetch(task.message_id)) : null;
             if (msg && (msg.hasThread || msg.thread)) {
-              thread = msg.thread || (await interaction.guild.channels.fetch(msg.threadId).catch(() => null));
+              thread = msg.thread || (await withTimeout(interaction.guild.channels.fetch(msg.threadId)));
               if (thread && thread.isThread()) { foundByMsg++; continue; }
             }
           } catch {}
         }
 
         // By parent channel active/archived
-        if (!thread && task.channel_id) {
+        if (!thread && task.channel_id && (Date.now() - start) < maxMs) {
           try {
-            const parent = await interaction.guild.channels.fetch(task.channel_id).catch(() => null);
+            const parent = await withTimeout(interaction.guild.channels.fetch(task.channel_id));
             if (parent && parent.threads) {
               const expectedNames = [
                 `Task: ${task.title}`,
                 `Task: ${task.title.substring(0, 93)}`,
                 `[Complete] Task: ${task.title.substring(0, 80)}`
               ];
-              const active = await parent.threads.fetchActive().catch(() => null);
+              const active = await withTimeout(parent.threads.fetchActive());
               if (active && active.threads) {
                 thread = active.threads.find(t => expectedNames.includes(t.name)) || thread;
               }
               if (!thread && typeof parent.threads.fetchArchived === 'function') {
-                const archivedPublic = await parent.threads.fetchArchived({ type: 'public' }).catch(() => null);
+                const archivedPublic = await withTimeout(parent.threads.fetchArchived({ type: 'public' }));
                 if (archivedPublic && archivedPublic.threads) {
                   thread = archivedPublic.threads.find(t => expectedNames.includes(t.name)) || thread;
                 }
                 if (!thread) {
-                  const archivedPrivate = await parent.threads.fetchArchived({ type: 'private' }).catch(() => null);
+                  const archivedPrivate = await withTimeout(parent.threads.fetchArchived({ type: 'private' }));
                   if (archivedPrivate && archivedPrivate.threads) {
                     thread = archivedPrivate.threads.find(t => expectedNames.includes(t.name)) || thread;
                   }
@@ -908,7 +928,7 @@ module.exports = {
         }
 
         // By guild scan
-        try {
+        if ((Date.now() - start) < maxMs) try {
           const expectedNames = [
             `Task: ${task.title}`,
             `Task: ${task.title.substring(0, 93)}`,
@@ -917,17 +937,17 @@ module.exports = {
           const textChannels = interaction.guild.channels.cache.filter(ch => ch.type === ChannelType.GuildText);
           for (const [, ch] of textChannels) {
             try {
-              const active = await ch.threads.fetchActive().catch(() => null);
+              const active = await withTimeout(ch.threads.fetchActive());
               if (active && active.threads) {
                 thread = active.threads.find(t => expectedNames.includes(t.name)) || thread;
               }
               if (!thread && typeof ch.threads.fetchArchived === 'function') {
-                const archivedPublic = await ch.threads.fetchArchived({ type: 'public' }).catch(() => null);
+                const archivedPublic = await withTimeout(ch.threads.fetchArchived({ type: 'public' }));
                 if (archivedPublic && archivedPublic.threads) {
                   thread = archivedPublic.threads.find(t => expectedNames.includes(t.name)) || thread;
                 }
                 if (!thread) {
-                  const archivedPrivate = await ch.threads.fetchArchived({ type: 'private' }).catch(() => null);
+                  const archivedPrivate = await withTimeout(ch.threads.fetchArchived({ type: 'private' }));
                   if (archivedPrivate && archivedPrivate.threads) {
                     thread = archivedPrivate.threads.find(t => expectedNames.includes(t.name)) || thread;
                   }
@@ -935,6 +955,7 @@ module.exports = {
               }
               if (thread) break;
             } catch {}
+            if ((Date.now() - start) > maxMs) break;
           }
         } catch {}
 
