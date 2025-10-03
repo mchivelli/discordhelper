@@ -69,6 +69,11 @@ module.exports = {
             .setRequired(false)
             .setAutocomplete(true)
         )
+    )
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('audit')
+        .setDescription('Diagnose thread availability for tasks (findable by id/message/name/scan)')
     ),
 
   async autocomplete(interaction) {
@@ -113,6 +118,8 @@ module.exports = {
         return this.recoverTasks(interaction);
       case 'backfill':
         return this.backfillMessages(interaction);
+      case 'audit':
+        return this.auditThreads(interaction);
     }
   },
 
@@ -551,6 +558,9 @@ module.exports = {
           embed.addFields({ name: 'Discussion Thread', value: `<#${thread.id}>`, inline: true });
           await taskMessage.edit({ embeds: [embed], components: [actionRow] });
 
+          // Preserve old thread id for fallback lookups before updating DB
+          const oldThreadId = task.thread_id;
+
           db.prepare('UPDATE admin_tasks SET thread_id = ?, message_id = ?, channel_id = ? WHERE task_id = ?')
             .run(thread.id, taskMessage.id, newChannelId, task.task_id);
 
@@ -567,12 +577,12 @@ module.exports = {
               'SELECT * FROM admin_task_thread_messages WHERE task_id = ? ORDER BY timestamp ASC'
             ).all(task.task_id);
 
-            // Fallback: use chat_messages from the old thread if no dedicated archive exists
-            if ((!archived || archived.length === 0) && task.thread_id) {
+            // Fallback: use chat_messages from the OLD thread if no dedicated archive exists
+            if ((!archived || archived.length === 0) && oldThreadId) {
               try {
                 archived = db.prepare(
                   'SELECT * FROM chat_messages WHERE guild_id = ? AND channel_id = ? ORDER BY timestamp ASC'
-                ).all(task.guild_id, task.thread_id);
+                ).all(task.guild_id, oldThreadId);
               } catch (fallbackErr) {
                 logger.warn('Fallback fetch of chat_messages failed:', fallbackErr);
               }
@@ -685,12 +695,100 @@ module.exports = {
       let threadsProcessed = 0;
       let threadsMissing = 0;
       for (const task of tasks) {
-        if (!task.thread_id) {
-          threadsMissing++;
-          continue;
+        let thread = null;
+        // 1) Try stored thread_id
+        if (task.thread_id) {
+          thread = await interaction.guild.channels.fetch(task.thread_id).catch(() => null);
+          if (thread && !thread.isThread()) {
+            thread = null;
+          }
         }
-        const thread = await interaction.guild.channels.fetch(task.thread_id).catch(() => null);
-        if (!thread || !thread.isThread()) {
+
+        // 2) If not found, try to discover via original message (if present), then by name under parent channel
+        if (!thread) {
+          try {
+            const parent = task.channel_id
+              ? await interaction.guild.channels.fetch(task.channel_id).catch(() => null)
+              : null;
+
+            // 2a) Try via the original parent message -> message.thread
+            if (parent && task.message_id) {
+              try {
+                const msg = await parent.messages.fetch(task.message_id).catch(() => null);
+                if (msg && (msg.hasThread || msg.thread)) {
+                  thread = msg.thread || (await interaction.guild.channels.fetch(msg.threadId).catch(() => null));
+                }
+              } catch {}
+            }
+
+            if (!thread && parent && parent.threads && typeof parent.threads.fetchActive === 'function') {
+              const expectedNames = [
+                `Task: ${task.title}`,
+                `Task: ${task.title.substring(0, 93)}`,
+                `[Complete] Task: ${task.title.substring(0, 80)}`
+              ];
+
+              // Active threads
+              const active = await parent.threads.fetchActive().catch(() => null);
+              if (active && active.threads) {
+                thread = active.threads.find(t => expectedNames.includes(t.name)) || thread;
+              }
+
+              // Archived threads (public and private)
+              if (!thread && typeof parent.threads.fetchArchived === 'function') {
+                const archivedPublic = await parent.threads.fetchArchived({ type: 'public' }).catch(() => null);
+                if (archivedPublic && archivedPublic.threads) {
+                  thread = archivedPublic.threads.find(t => expectedNames.includes(t.name)) || thread;
+                }
+                if (!thread) {
+                  const archivedPrivate = await parent.threads.fetchArchived({ type: 'private' }).catch(() => null);
+                  if (archivedPrivate && archivedPrivate.threads) {
+                    thread = archivedPrivate.threads.find(t => expectedNames.includes(t.name)) || thread;
+                  }
+                }
+              }
+
+              if (thread) {
+                // Update DB with discovered thread id for future ops
+                try {
+                  db.prepare('UPDATE admin_tasks SET thread_id = ? WHERE task_id = ?').run(thread.id, task.task_id);
+                } catch {}
+              }
+            }
+          } catch {}
+        }
+
+        if (!thread) {
+          // 3) Last resort: scan all text channels for matching thread names
+          try {
+            const expectedNames = [
+              `Task: ${task.title}`,
+              `Task: ${task.title.substring(0, 93)}`,
+              `[Complete] Task: ${task.title.substring(0, 80)}`
+            ];
+            const textChannels = interaction.guild.channels.cache.filter(ch => ch.type === ChannelType.GuildText);
+            for (const [, ch] of textChannels) {
+              try {
+                const active = await ch.threads.fetchActive().catch(() => null);
+                if (active && active.threads) {
+                  thread = active.threads.find(t => expectedNames.includes(t.name)) || thread;
+                }
+                if (!thread && typeof ch.threads.fetchArchived === 'function') {
+                  const archived = await ch.threads.fetchArchived({ type: 'public' }).catch(() => null);
+                  if (archived && archived.threads) {
+                    thread = archived.threads.find(t => expectedNames.includes(t.name)) || thread;
+                  }
+                }
+                if (thread) {
+                  try { db.prepare('UPDATE admin_tasks SET thread_id = ? WHERE task_id = ?').run(thread.id, task.task_id); } catch {}
+                  break;
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+
+        if (!thread) {
           threadsMissing++;
           continue;
         }
@@ -738,6 +836,135 @@ module.exports = {
         return interaction.editReply('❌ Backfill failed: ' + error.message);
       } else {
         return interaction.reply({ content: '❌ Backfill failed: ' + error.message, ephemeral: true });
+      }
+    }
+  }
+  ,
+  async auditThreads(interaction) {
+    try {
+      await interaction.deferReply({ ephemeral: true });
+
+      if (!interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) {
+        return interaction.editReply('❌ Only administrators can use the audit command.');
+      }
+
+      const tasks = db.prepare('SELECT * FROM admin_tasks ORDER BY created_at ASC').all();
+      if (!tasks || tasks.length === 0) {
+        return interaction.editReply('📋 No admin tasks found to audit.');
+      }
+
+      let foundById = 0, foundByMsg = 0, foundByParent = 0, foundByScan = 0, missing = 0;
+      const missingList = [];
+
+      for (const task of tasks) {
+        let thread = null;
+        // By stored thread_id
+        if (task.thread_id) {
+          thread = await interaction.guild.channels.fetch(task.thread_id).catch(() => null);
+          if (thread && !thread.isThread()) thread = null; else if (thread) { foundById++; continue; }
+        }
+
+        // By parent message
+        if (!thread && task.channel_id && task.message_id) {
+          try {
+            const parent = await interaction.guild.channels.fetch(task.channel_id).catch(() => null);
+            const msg = parent ? await parent.messages.fetch(task.message_id).catch(() => null) : null;
+            if (msg && (msg.hasThread || msg.thread)) {
+              thread = msg.thread || (await interaction.guild.channels.fetch(msg.threadId).catch(() => null));
+              if (thread && thread.isThread()) { foundByMsg++; continue; }
+            }
+          } catch {}
+        }
+
+        // By parent channel active/archived
+        if (!thread && task.channel_id) {
+          try {
+            const parent = await interaction.guild.channels.fetch(task.channel_id).catch(() => null);
+            if (parent && parent.threads) {
+              const expectedNames = [
+                `Task: ${task.title}`,
+                `Task: ${task.title.substring(0, 93)}`,
+                `[Complete] Task: ${task.title.substring(0, 80)}`
+              ];
+              const active = await parent.threads.fetchActive().catch(() => null);
+              if (active && active.threads) {
+                thread = active.threads.find(t => expectedNames.includes(t.name)) || thread;
+              }
+              if (!thread && typeof parent.threads.fetchArchived === 'function') {
+                const archivedPublic = await parent.threads.fetchArchived({ type: 'public' }).catch(() => null);
+                if (archivedPublic && archivedPublic.threads) {
+                  thread = archivedPublic.threads.find(t => expectedNames.includes(t.name)) || thread;
+                }
+                if (!thread) {
+                  const archivedPrivate = await parent.threads.fetchArchived({ type: 'private' }).catch(() => null);
+                  if (archivedPrivate && archivedPrivate.threads) {
+                    thread = archivedPrivate.threads.find(t => expectedNames.includes(t.name)) || thread;
+                  }
+                }
+              }
+            }
+          } catch {}
+          if (thread) { foundByParent++; continue; }
+        }
+
+        // By guild scan
+        try {
+          const expectedNames = [
+            `Task: ${task.title}`,
+            `Task: ${task.title.substring(0, 93)}`,
+            `[Complete] Task: ${task.title.substring(0, 80)}`
+          ];
+          const textChannels = interaction.guild.channels.cache.filter(ch => ch.type === ChannelType.GuildText);
+          for (const [, ch] of textChannels) {
+            try {
+              const active = await ch.threads.fetchActive().catch(() => null);
+              if (active && active.threads) {
+                thread = active.threads.find(t => expectedNames.includes(t.name)) || thread;
+              }
+              if (!thread && typeof ch.threads.fetchArchived === 'function') {
+                const archivedPublic = await ch.threads.fetchArchived({ type: 'public' }).catch(() => null);
+                if (archivedPublic && archivedPublic.threads) {
+                  thread = archivedPublic.threads.find(t => expectedNames.includes(t.name)) || thread;
+                }
+                if (!thread) {
+                  const archivedPrivate = await ch.threads.fetchArchived({ type: 'private' }).catch(() => null);
+                  if (archivedPrivate && archivedPrivate.threads) {
+                    thread = archivedPrivate.threads.find(t => expectedNames.includes(t.name)) || thread;
+                  }
+                }
+              }
+              if (thread) break;
+            } catch {}
+          }
+        } catch {}
+
+        if (thread) { foundByScan++; continue; }
+
+        missing++;
+        if (missingList.length < 10) missingList.push(`- ${task.task_id}: ${task.title}`);
+      }
+
+      const lines = [];
+      lines.push(`📋 Audit complete for ${tasks.length} tasks:`);
+      lines.push(`• Found by stored thread_id: ${foundById}`);
+      lines.push(`• Found by parent message: ${foundByMsg}`);
+      lines.push(`• Found by parent channel threads: ${foundByParent}`);
+      lines.push(`• Found by guild-wide scan: ${foundByScan}`);
+      lines.push(`• Missing or inaccessible: ${missing}`);
+      if (missingList.length) {
+        lines.push('\nSome missing examples:');
+        lines.push(missingList.join('\n'));
+      }
+
+      lines.push('\nTips: Ensure the bot has ViewChannel + ReadMessageHistory (+ ManageThreads for private archived) on the original parent channels. If threads were deleted, their content cannot be fetched from Discord.');
+
+      return interaction.editReply(lines.join('\n'));
+    } catch (error) {
+      logger.error('Error auditing threads:', error);
+      if (interaction.deferred) {
+        return interaction.editReply('❌ Audit failed: ' + error.message);
+      } else {
+        return interaction.reply({ content: '❌ Audit failed: ' + error.message, ephemeral: true });
       }
     }
   }
