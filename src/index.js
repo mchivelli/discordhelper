@@ -938,6 +938,86 @@ View with \`/task list id:${taskId}\`.`
           return interaction.reply({ content: '❌ Task not found.', ephemeral: true });
         }
 
+        // Handle SAVECHANGELOG action separately (doesn't change status or embed)
+        if (action === 'savechangelog') {
+          try {
+            await interaction.deferReply({ ephemeral: true });
+            logger.info('[CHANGELOG] Save to Changelog button clicked');
+            const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
+            if (!currentVersion) {
+              return interaction.editReply({ content: '❌ No active changelog version. Use `/changelog setversion` first.' });
+            }
+            
+            // Prevent duplicate entries for the same task in this version
+            let existing = [];
+            try {
+              existing = db.prepare('SELECT * FROM changelog_entries WHERE version = ?').all(currentVersion.version);
+            } catch (e) {
+              existing = [];
+            }
+            const already = Array.isArray(existing) && existing.some(e => e.task_id === taskId);
+            if (already) {
+              return interaction.editReply({ content: `ℹ️ Already saved to version ${currentVersion.version}.` });
+            }
+            
+            const entryId = `entry-${Date.now()}`;
+            db.prepare(`
+              INSERT INTO changelog_entries
+              (id, version, entry_type, entry_text, task_id, author_id, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(entryId, currentVersion.version, 'task', task.title, taskId, interaction.user.id, Date.now());
+
+            // Post a direct entry line to the version thread
+            try {
+              const versionThread = await interaction.client.channels.fetch(currentVersion.thread_id).catch(() => null);
+              if (versionThread && versionThread.isThread()) {
+                try { if (versionThread.archived) await versionThread.setArchived(false); } catch {}
+                try { if (versionThread.locked) await versionThread.setLocked(false); } catch {}
+                const ts = Math.floor(Date.now() / 1000);
+                const threadLink = task.thread_id ? `https://discord.com/channels/${interaction.guildId}/${task.thread_id}` : 'N/A';
+                const entryLine = `✅ **${task.title}**\n   → By: <@${interaction.user.id}> | <t:${ts}:f> | 🧵 [Thread](${threadLink})`;
+                await versionThread.send({ content: entryLine });
+              }
+            } catch (postErr) {
+              logger.error('[CHANGELOG] Failed to post direct entry to changelog thread:', postErr);
+            }
+
+            // Refresh summary in the version thread
+            const changelogCommand = interaction.client.commands.get('changelog');
+            if (changelogCommand && changelogCommand.updateChangelogThread) {
+              await changelogCommand.updateChangelogThread(currentVersion.version, interaction.client);
+            }
+
+            await interaction.editReply({ content: `✅ Saved to changelog version ${currentVersion.version}.` });
+
+            // Disable the Save to Changelog button to prevent re-clicks
+            try {
+              const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`admintask_savechangelog_${taskId}`)
+                  .setLabel('Save to Changelog')
+                  .setStyle(ButtonStyle.Primary)
+                  .setEmoji('📝')
+                  .setDisabled(true),
+                new ButtonBuilder()
+                  .setCustomId(`admintask_reopen_${taskId}`)
+                  .setLabel('Reopen')
+                  .setStyle(ButtonStyle.Secondary)
+                  .setEmoji('🔓')
+              );
+              await interaction.message.edit({ components: [row] }).catch(() => {});
+            } catch (editErr) {
+              logger.warn('[CHANGELOG] Could not disable Save button:', editErr?.message);
+            }
+          } catch (saveErr) {
+            logger.error('[CHANGELOG] Error during Save to Changelog:', saveErr);
+            if (interaction.deferred) {
+              await interaction.editReply({ content: '❌ Error saving to changelog.' });
+            }
+          }
+          return;
+        }
+
         // Handle CLAIM action separately
         if (action === 'claim') {
           // Check if user is an admin
@@ -1236,80 +1316,6 @@ View with \`/task list id:${taskId}\`.`
           }
         } else {
           logger.warn('No thread_id found for task:', taskId);
-        }
-        // Handle the Save to Changelog action after thread operations
-        if (action === 'savechangelog') {
-          try {
-            logger.info('[CHANGELOG] Save to Changelog button clicked');
-            const currentVersion = db.prepare('SELECT * FROM changelog_versions WHERE is_current = 1').get();
-            if (!currentVersion) {
-              await interaction.followUp({ content: '❌ No active changelog version. Use `/changelog setversion` first.', ephemeral: true });
-            } else {
-              // Prevent duplicate entries for the same task in this version
-              let existing = [];
-              try {
-                existing = db.prepare('SELECT * FROM changelog_entries WHERE version = ?').all(currentVersion.version);
-              } catch (e) {
-                existing = [];
-              }
-              const already = Array.isArray(existing) && existing.some(e => e.task_id === taskId);
-              if (already) {
-                await interaction.followUp({ content: `ℹ️ Already saved to version ${currentVersion.version}.`, ephemeral: true });
-              } else {
-                const entryId = `entry-${Date.now()}`;
-                db.prepare(`
-                  INSERT INTO changelog_entries
-                  (id, version, entry_type, entry_text, task_id, author_id, created_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?)
-                `).run(entryId, currentVersion.version, 'task', task.title, taskId, interaction.user.id, Date.now());
-
-                // Post a direct entry line to the version thread
-                try {
-                  const versionThread = await interaction.client.channels.fetch(currentVersion.thread_id).catch(() => null);
-                  if (versionThread && versionThread.isThread()) {
-                    try { if (versionThread.archived) await versionThread.setArchived(false); } catch {}
-                    try { if (versionThread.locked) await versionThread.setLocked(false); } catch {}
-                    const ts = Math.floor(Date.now() / 1000);
-                    const threadLink = task.thread_id ? `https://discord.com/channels/${interaction.guildId}/${task.thread_id}` : 'N/A';
-                    const entryLine = `✅ **${task.title}**\n   → By: <@${interaction.user.id}> | <t:${ts}:f> | 🧵 [Thread](${threadLink})`;
-                    await versionThread.send({ content: entryLine });
-                  }
-                } catch (postErr) {
-                  logger.error('[CHANGELOG] Failed to post direct entry to changelog thread:', postErr);
-                }
-
-                // Refresh summary in the version thread
-                const changelogCommand = interaction.client.commands.get('changelog');
-                if (changelogCommand && changelogCommand.updateChangelogThread) {
-                  await changelogCommand.updateChangelogThread(currentVersion.version, interaction.client);
-                }
-
-                await interaction.followUp({ content: `✅ Saved to changelog version ${currentVersion.version}.`, ephemeral: true });
-              }
-
-              // Disable the Save to Changelog button to prevent re-clicks
-              try {
-                const row = new ActionRowBuilder().addComponents(
-                  new ButtonBuilder()
-                    .setCustomId(`admintask_savechangelog_${taskId}`)
-                    .setLabel('Save to Changelog')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('📝')
-                    .setDisabled(true),
-                  new ButtonBuilder()
-                    .setCustomId(`admintask_reopen_${taskId}`)
-                    .setLabel('Reopen')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('🔓')
-                );
-                await interaction.message.edit({ components: [row] }).catch(() => {});
-              } catch (editErr) {
-                logger.warn('[CHANGELOG] Could not disable Save button:', editErr?.message);
-              }
-            }
-          } catch (saveErr) {
-            logger.error('[CHANGELOG] Error during Save to Changelog:', saveErr);
-          }
         }
 
       } catch (error) {
