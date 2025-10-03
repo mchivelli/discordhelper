@@ -1,0 +1,48 @@
+--- a/src/utils/file-db.js
++++ b/src/utils/file-db.js
+@@ -369,6 +369,42 @@
+         console.log(`DEBUG: all() - chat_messages filtered count:`, filtered.length);
+         return filtered;
+       }
++
++      // Special handling for chat_summaries queries
++      if (this.tableName === 'chat_summaries') {
++        const q = this.query.toLowerCase();
++        let idx = 0;
++        let filtered = items;
++        
++        if (q.includes('guild_id =')) {
++          const guildId = params[idx++];
++          filtered = filtered.filter(item => item.guild_id === guildId);
++        }
++        
++        if (q.includes('date >=')) {
++          const cutoffDate = params[idx++];
++          filtered = filtered.filter(item => item.date >= cutoffDate);
++        }
++        
++        if (q.includes('channel_id =')) {
++          const channelId = params[idx++];
++          filtered = filtered.filter(item => item.channel_id === channelId);
++        }
++        
++        if (q.includes('order by date desc')) {
++          filtered.sort((a, b) => {
++            if (a.date < b.date) return 1;
++            if (a.date > b.date) return -1;
++            return 0;
++          });
++        } else if (q.includes('order by created_at desc')) {
++          filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
++        }
++        
++        if (q.includes('limit')) {
++          const limit = params[params.length - 1];
++          filtered = filtered.slice(0, typeof limit === 'number' ? limit : 0);
++        }
++        
++        console.log(`DEBUG: all() - chat_summaries filtered count:`, filtered.length);
++        return filtered;
++      }
+ 
+       let filtered = items;

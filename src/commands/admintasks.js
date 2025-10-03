@@ -1,78 +1,64 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField, ChannelType } = require('discord.js');
 const db = require('../utils/db');
 const logger = require('../utils/logger');
+const fs = require('fs');
+const path = require('path');
 
-// To-Do Channel ID
 const TODO_CHANNEL_ID = '1292819438370033685';
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('admintasks')
-    .setDescription('Manage admin tasks with dedicated discussion threads')
-    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
-    .addSubcommand(sub =>
-      sub.setName('create')
-        .setDescription('Create a new admin task with a discussion thread')
-        .addStringOption(o =>
-          o.setName('title')
-            .setDescription('Task title (e.g., "Origins and Origin-Classes")')
-            .setRequired(true)
-            .setMaxLength(100))
-        .addStringOption(o =>
-          o.setName('description')
-            .setDescription('Detailed description of the task')
-            .setRequired(true)
-            .setMaxLength(1000))
-        .addUserOption(o =>
-          o.setName('assignee1')
-            .setDescription('First admin to assign this task to (leave empty for unassigned)')
+    .setDescription('Manage administrative tasks')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('create')
+        .setDescription('Create a new admin task')
+        .addStringOption(option =>
+          option.setName('title')
+            .setDescription('Task title')
+            .setRequired(true))
+        .addStringOption(option =>
+          option.setName('description')
+            .setDescription('Task description')
+            .setRequired(true))
+        .addUserOption(option =>
+          option.setName('assignee1')
+            .setDescription('First assignee (admin)')
             .setRequired(false))
-        .addUserOption(o =>
-          o.setName('assignee2')
-            .setDescription('Second admin to assign (optional)')
+        .addUserOption(option =>
+          option.setName('assignee2')
+            .setDescription('Second assignee (admin)')
             .setRequired(false))
-        .addUserOption(o =>
-          o.setName('assignee3')
-            .setDescription('Third admin to assign (optional)')
-            .setRequired(false))
-        .addUserOption(o =>
-          o.setName('assignee4')
-            .setDescription('Fourth admin to assign (optional)')
+        .addUserOption(option =>
+          option.setName('assignee3')
+            .setDescription('Third assignee (admin)')
             .setRequired(false)))
-    .addSubcommand(sub =>
-      sub.setName('list')
-        .setDescription('List all admin tasks')
-        .addStringOption(o =>
-          o.setName('status')
-            .setDescription('Filter by status')
-            .setRequired(false)
-            .addChoices(
-              { name: 'In Progress', value: 'in_progress' },
-              { name: 'Complete', value: 'complete' },
-              { name: 'Not Started', value: 'not_started' },
-              { name: 'All', value: 'all' }
-            )))
-    .addSubcommand(sub =>
-      sub.setName('mytasks')
-        .setDescription('List tasks assigned to you')
-        .addStringOption(o =>
-          o.setName('status')
-            .setDescription('Filter by status')
-            .setRequired(false)
-            .addChoices(
-              { name: 'In Progress', value: 'in_progress' },
-              { name: 'Complete', value: 'complete' },
-              { name: 'Not Started', value: 'not_started' },
-              { name: 'All', value: 'all' }
-            )))
-    .addSubcommand(sub =>
-      sub.setName('delete')
-        .setDescription('Delete an admin task and its thread')
-        .addStringOption(o =>
-          o.setName('task_id')
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('list')
+        .setDescription('List all admin tasks'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('mytasks')
+        .setDescription('List tasks assigned to you'))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('delete')
+        .setDescription('Delete an admin task')
+        .addStringOption(option =>
+          option.setName('task_id')
             .setDescription('Task ID to delete')
             .setRequired(true)
-            .setAutocomplete(true))),
+            .setAutocomplete(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('recover')
+        .setDescription('🚑 EMERGENCY: Recover all tasks from database')
+        .addStringOption(option =>
+          option.setName('channel_id')
+            .setDescription('New TODO channel ID')
+            .setRequired(true))),
 
   async autocomplete(interaction) {
     const focusedOption = interaction.options.getFocused(true);
@@ -112,6 +98,8 @@ module.exports = {
         return this.listMyTasks(interaction);
       case 'delete':
         return this.deleteTask(interaction);
+      case 'recover':
+        return this.recoverTasks(interaction);
     }
   },
 
@@ -395,16 +383,26 @@ module.exports = {
         return interaction.editReply('❌ Task not found.');
       }
 
-      // Try to delete the thread
+      // Try to delete the thread (ONLY if it's actually a thread, not a channel)
       try {
-        const thread = await interaction.guild.channels.fetch(task.thread_id);
-        if (thread) {
-          await thread.delete('Admin task deleted');
+        if (task.thread_id) {
+          const channel = await interaction.guild.channels.fetch(task.thread_id).catch(() => null);
+          
+          // CRITICAL SAFETY CHECK: Only delete if it's actually a thread
+          if (channel && channel.isThread()) {
+            await channel.delete('Admin task deleted');
+            logger.info(`Deleted thread ${task.thread_id} for task ${taskId}`);
+          } else if (channel) {
+            logger.error(`SAFETY ABORT: Attempted to delete non-thread channel ${task.thread_id} (type: ${channel.type}). This is likely the parent channel!`);
+            await interaction.followUp({ 
+              content: `⚠️ **SAFETY ABORT**: The stored thread_id points to a regular channel, not a thread. The channel was NOT deleted for safety. Please contact an admin to fix the database.`,
+              ephemeral: true 
+            });
+          }
         }
       } catch (error) {
         logger.warn('Could not delete thread:', error);
       }
-
       // Delete from database
       db.prepare('DELETE FROM admin_task_assignees WHERE task_id = ?').run(taskId);
       db.prepare('DELETE FROM admin_tasks WHERE task_id = ?').run(taskId);
@@ -417,6 +415,175 @@ module.exports = {
         await interaction.editReply('❌ Failed to delete task: ' + error.message);
       } else {
         await interaction.reply({ content: '❌ Failed to delete task: ' + error.message, ephemeral: true });
+      }
+    }
+  },
+
+  async recoverTasks(interaction) {
+    try {
+      await interaction.deferReply();
+
+      if (!interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) {
+        return interaction.editReply('❌ Only administrators can use the recovery command.');
+      }
+
+      const newChannelId = interaction.options.getString('channel_id');
+      const todoChannel = await interaction.guild.channels.fetch(newChannelId).catch(() => null);
+      
+      if (!todoChannel) {
+        return interaction.editReply('❌ Channel not found! Please provide a valid channel ID.');
+      }
+
+      if (todoChannel.type !== ChannelType.GuildText) {
+        return interaction.editReply('❌ The provided channel must be a text channel.');
+      }
+
+      const tasks = db.prepare('SELECT * FROM admin_tasks ORDER BY created_at ASC').all();
+      
+      if (tasks.length === 0) {
+        return interaction.editReply('❌ No tasks found in database to recover.');
+      }
+
+      await interaction.editReply(`🔄 **Starting Recovery Process**\n\nFound ${tasks.length} tasks. This may take a moment...\n\n_Do not cancel!_`);
+
+      let recovered = 0;
+      let failed = 0;
+      const errors = [];
+
+      for (const task of tasks) {
+        try {
+          const assignees = db.prepare('SELECT user_id FROM admin_task_assignees WHERE task_id = ?').all(task.task_id);
+          const assigneeList = assignees.map(a => `<@${a.user_id}>`).join(', ') || '❓ Unassigned';
+          const isUnassigned = assignees.length === 0;
+
+          const date = new Date(task.created_at);
+          const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+
+          let statusEmoji = '🔄';
+          let statusText = 'In Progress';
+          let embedColor = 0xFFA500;
+
+          if (task.status === 'complete') {
+            statusEmoji = '✅';
+            statusText = 'Complete';
+            embedColor = 0x00FF00;
+          } else if (isUnassigned) {
+            statusEmoji = '⏳';
+            statusText = 'Unassigned';
+            embedColor = 0x808080;
+          }
+
+          const embed = new EmbedBuilder()
+            .setTitle(task.title)
+            .setDescription(task.description)
+            .setColor(embedColor)
+            .addFields(
+              { name: 'Status', value: `${statusEmoji} ${statusText}`, inline: true },
+              { name: 'Creator', value: `<@${task.creator_id}>`, inline: true },
+              { name: 'Assigned To', value: assigneeList, inline: false }
+            )
+            .setFooter({ text: `Task ID: ${task.task_id} • ${dateStr}` })
+            .setTimestamp();
+
+          const actionRow = new ActionRowBuilder();
+          
+          if (task.status === 'complete') {
+            actionRow.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`admintask_reopen_${task.task_id}`)
+                .setLabel('Reopen')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('🔓')
+            );
+          } else if (isUnassigned) {
+            actionRow.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`admintask_claim_${task.task_id}`)
+                .setLabel('Claim Task')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('✋')
+            );
+          } else {
+            actionRow.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`admintask_complete_${task.task_id}`)
+                .setLabel('Mark Complete')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅'),
+              new ButtonBuilder()
+                .setCustomId(`admintask_progress_${task.task_id}`)
+                .setLabel('Mark In Progress')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🔄'),
+              new ButtonBuilder()
+                .setCustomId(`admintask_reopen_${task.task_id}`)
+                .setLabel('Reopen')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('🔓')
+            );
+          }
+
+          const taskMessage = await todoChannel.send({ embeds: [embed], components: [actionRow] });
+
+          const threadName = task.status === 'complete' 
+            ? `[Complete] Task: ${task.title.substring(0, 80)}`
+            : `Task: ${task.title.substring(0, 93)}`;
+            
+          const thread = await taskMessage.startThread({
+            name: threadName,
+            autoArchiveDuration: 10080,
+            reason: 'Admin task recovery'
+          });
+
+          embed.addFields({ name: 'Discussion Thread', value: `<#${thread.id}>`, inline: true });
+          await taskMessage.edit({ embeds: [embed], components: [actionRow] });
+
+          db.prepare('UPDATE admin_tasks SET thread_id = ?, message_id = ?, channel_id = ? WHERE task_id = ?')
+            .run(thread.id, taskMessage.id, newChannelId, task.task_id);
+
+          await thread.send(`📋 **Task Recovered**\n\nThis task was recovered from the database after channel deletion.\n\nOriginal creation: ${dateStr}`);
+
+          if (assignees.length > 0) {
+            const mentions = assignees.map(a => `<@${a.user_id}>`).join(' ');
+            await thread.send(`${mentions} - You are assigned to this task.`);
+          }
+
+          if (task.status === 'complete') {
+            await thread.setLocked(true).catch(() => {});
+            await thread.setArchived(true).catch(() => {});
+          }
+
+          recovered++;
+          logger.info(`Recovered task ${task.task_id}: ${task.title}`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+
+        } catch (taskError) {
+          failed++;
+          errors.push(`${task.task_id}: ${taskError.message}`);
+          logger.error(`Failed to recover task ${task.task_id}:`, taskError);
+        }
+      }
+
+      let report = `✅ **Recovery Complete!**\n\n`;
+      report += `✅ **Recovered:** ${recovered} tasks\n`;
+      if (failed > 0) {
+        report += `❌ **Failed:** ${failed} tasks\n\n`;
+        report += `**Errors:**\n${errors.slice(0, 5).map(e => `- ${e}`).join('\n')}`;
+        if (errors.length > 5) {
+          report += `\n_...and ${errors.length - 5} more errors_`;
+        }
+      }
+      report += `\n\n**New TODO Channel:** <#${newChannelId}>`;
+      report += `\n\n⚠️ **IMPORTANT:** Update line 7 in \`src/commands/admintasks.js\`:\n\`\`\`javascript\nconst TODO_CHANNEL_ID = '${newChannelId}';\n\`\`\``;
+
+      await interaction.followUp(report);
+
+    } catch (error) {
+      logger.error('Error recovering tasks:', error);
+      if (interaction.deferred) {
+        await interaction.editReply('❌ Failed to recover tasks: ' + error.message);
+      } else {
+        await interaction.reply({ content: '❌ Failed to recover tasks: ' + error.message, ephemeral: true });
       }
     }
   }
