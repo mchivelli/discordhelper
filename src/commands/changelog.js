@@ -539,8 +539,8 @@ module.exports = {
       return interaction.editReply('❌ No active changelog version to complete.');
     }
     
-    // Generate AI summary
-    const summary = await this.generateVersionSummary(currentVersion.version);
+    // Generate AI summary (pass client for thread fetching)
+    const summary = await this.generateVersionSummary(currentVersion.version, interaction.client);
     
     // Update database
     db.prepare(`
@@ -729,7 +729,7 @@ module.exports = {
     }
   },
   
-  async generateVersionSummary(version) {
+  async generateVersionSummary(version, client = null) {
     const entries = db.prepare('SELECT * FROM changelog_entries WHERE version = ? ORDER BY created_at ASC').all(version);
     const versionData = db.prepare('SELECT * FROM changelog_versions WHERE version = ?').get(version);
     
@@ -749,8 +749,35 @@ module.exports = {
     const endTime = new Date();
     const durationDays = Math.ceil((endTime - startTime) / (1000 * 60 * 60 * 24));
     
+    // Fetch thread discussions for task entries to enhance analysis
+    const threadDiscussions = [];
+    if (client) {
+      for (const entry of taskEntries) {
+        if (entry.task_id) {
+          try {
+            const adminTask = db.prepare('SELECT thread_id, title FROM admin_tasks WHERE task_id = ?').get(entry.task_id);
+            if (adminTask && adminTask.thread_id) {
+              const thread = await client.channels.fetch(adminTask.thread_id).catch(() => null);
+              if (thread && thread.isThread()) {
+                const messages = await thread.messages.fetch({ limit: 50 }).catch(() => null);
+                if (messages && messages.size > 0) {
+                  const discussionText = messages.map(m => `${m.author.username}: ${m.content}`).reverse().join('\n');
+                  threadDiscussions.push({
+                    task: adminTask.title,
+                    discussion: discussionText.substring(0, 2000) // Limit per thread
+                  });
+                }
+              }
+            }
+          } catch (err) {
+            logger.warn(`Could not fetch thread for task ${entry.task_id}:`, err.message);
+          }
+        }
+      }
+    }
+    
     try {
-      // Use AI to generate summary
+      // Use AI to generate summary with enhanced context from threads
       const { generateChangelogSummary } = require('../utils/ai');
       
       const summary = await generateChangelogSummary(
@@ -758,7 +785,8 @@ module.exports = {
         taskEntries.map(e => e.entry_text),
         manualEntries.map(e => e.entry_text),
         contributors,
-        durationDays
+        durationDays,
+        threadDiscussions // Pass thread discussions for deeper analysis
       );
       
       return summary;

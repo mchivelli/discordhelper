@@ -1242,15 +1242,30 @@ View with \`/task list id:${taskId}\`.`
                 console.log('[FIRST HANDLER] Completion message sent');
 
                 // Rename thread to "[Complete] Task: xxx"
-                const newThreadName = `[Complete] Task: ${task.title.substring(0, 80)}`;
+                // Discord thread name limit is 100 chars
+                const maxTitleLen = 100 - '[Complete] Task: '.length;
+                const newThreadName = `[Complete] Task: ${task.title.substring(0, maxTitleLen)}`;
                 console.log('[FIRST HANDLER] Attempting to rename thread to:', newThreadName);
                 try {
+                  // Ensure thread is not archived before renaming
+                  if (thread.archived) {
+                    await thread.setArchived(false);
+                    console.log('[FIRST HANDLER] Unarchived thread before rename');
+                  }
                   await thread.setName(newThreadName);
                   console.log('[FIRST HANDLER] ✅ Thread renamed successfully!');
                   logger.info(`Renamed thread to: ${newThreadName}`);
                 } catch (err) {
                   console.error('[FIRST HANDLER] ❌ FAILED to rename thread:', err);
                   logger.error('Could not rename thread:', err);
+                  logger.error('Error details:', {
+                    message: err.message,
+                    code: err.code,
+                    httpStatus: err.httpStatus,
+                    threadId: task.thread_id,
+                    threadArchived: thread.archived,
+                    threadLocked: thread.locked
+                  });
                 }
 
                 // Lock the thread BEFORE archiving (Discord requirement)
@@ -1357,7 +1372,7 @@ View with \`/task list id:${taskId}\`.`
           
           await interaction.editReply('⏳ Generating AI summary report... This may take a moment.');
           
-          const summary = await changelogCommand.generateVersionSummary(version);
+          const summary = await changelogCommand.generateVersionSummary(version, interaction.client);
           
           // Update database
           db.prepare(`
@@ -1404,7 +1419,7 @@ View with \`/task list id:${taskId}\`.`
             const changelogCommand = interaction.client.commands.get('changelog');
             if (changelogCommand) {
               // Generate summary
-              const summary = await changelogCommand.generateVersionSummary(currentVersion.version);
+              const summary = await changelogCommand.generateVersionSummary(currentVersion.version, interaction.client);
               
               // Update database
               db.prepare(`

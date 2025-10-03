@@ -1310,7 +1310,16 @@ function validateAndEnhanceAnalysis(analysis, messages, context) {
 }
 
 // Generate a concise changelog summary for a version
-async function generateChangelogSummary(version, taskList, manualEntries, contributorIds, durationDays) {
+async function generateChangelogSummary(version, taskList, manualEntries, contributorIds, durationDays, threadDiscussions = []) {
+  let discussionContext = '';
+  if (threadDiscussions && threadDiscussions.length > 0) {
+    discussionContext = '\n\n**Thread Discussions & Context:**\n';
+    threadDiscussions.forEach((thread, i) => {
+      discussionContext += `\n### Task: ${thread.task}\n${thread.discussion.substring(0, 1500)}\n`;
+    });
+    discussionContext += '\nUse the above thread discussions to provide deeper insights into implementation details, challenges overcome, and technical decisions made.\n';
+  }
+
   const prompt = `Generate a concise changelog summary for version ${version}.
 
 **Completed Tasks:**
@@ -1321,22 +1330,24 @@ ${manualEntries.length > 0 ? manualEntries.map((e, i) => `${i + 1}. ${e}`).join(
 
 **Development Duration:** ${durationDays} days
 **Contributors:** ${contributorIds.length} team members
+${discussionContext}
 
 Please provide a professional changelog summary with:
 1. Brief overview (2-3 sentences) - what was the focus of this version?
 2. Key accomplishments (bullet points, max 5 most important items)
 3. Notable highlights or improvements
-4. One-line version description
+4. Technical insights (if thread discussions reveal important implementation details)
+5. One-line version description
 
-Keep it clear, professional, and under 500 words. Focus on what matters to developers and administrators.`;
+Keep it clear, professional, and under 600 words. Focus on what matters to developers and administrators.`;
 
   const messages = [
-    { role: 'system', content: 'You are a technical writer creating concise changelog summaries for software versions.' },
+    { role: 'system', content: 'You are a technical writer creating concise changelog summaries for software versions. Analyze thread discussions to extract valuable technical insights and implementation details.' },
     { role: 'user', content: prompt }
   ];
 
   try {
-    const summary = await callLLMAPI(messages, 800, SUMMARIZATION_MODEL);
+    const summary = await callLLMAPI(messages, 1000, SUMMARIZATION_MODEL);
     return summary;
   } catch (error) {
     logger.error('Error generating changelog summary:', error);
