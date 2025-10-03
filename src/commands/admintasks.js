@@ -58,7 +58,18 @@ module.exports = {
         .addStringOption(option =>
           option.setName('channel_id')
             .setDescription('New TODO channel ID')
-            .setRequired(true))),
+            .setRequired(true)))
+    .addSubcommand(subcommand =>
+      subcommand
+        .setName('backfill')
+        .setDescription('Archive messages from existing admin task threads so future recoveries can replay them')
+        .addStringOption(option =>
+          option.setName('task_id')
+            .setDescription('Specific task ID to backfill (leave empty to backfill all)')
+            .setRequired(false)
+            .setAutocomplete(true)
+        )
+    ),
 
   async autocomplete(interaction) {
     const focusedOption = interaction.options.getFocused(true);
@@ -100,6 +111,8 @@ module.exports = {
         return this.deleteTask(interaction);
       case 'recover':
         return this.recoverTasks(interaction);
+      case 'backfill':
+        return this.backfillMessages(interaction);
     }
   },
 
@@ -643,6 +656,88 @@ module.exports = {
         await interaction.editReply('❌ Failed to recover tasks: ' + error.message);
       } else {
         await interaction.reply({ content: '❌ Failed to recover tasks: ' + error.message, ephemeral: true });
+      }
+    }
+  }
+  ,
+  async backfillMessages(interaction) {
+    try {
+      await interaction.deferReply({ ephemeral: true });
+
+      if (!interaction.memberPermissions.has(PermissionsBitField.Flags.Administrator)) {
+        return interaction.editReply('❌ Only administrators can use the backfill command.');
+      }
+
+      const specificTaskId = interaction.options.getString('task_id');
+      let tasks = [];
+      if (specificTaskId && specificTaskId !== 'no_tasks_found') {
+        const t = db.prepare('SELECT * FROM admin_tasks WHERE task_id = ?').get(specificTaskId);
+        if (t) tasks = [t];
+      } else {
+        tasks = db.prepare('SELECT * FROM admin_tasks ORDER BY created_at ASC').all();
+      }
+
+      if (!tasks || tasks.length === 0) {
+        return interaction.editReply('📋 No admin tasks found to backfill.');
+      }
+
+      let totalArchived = 0;
+      let threadsProcessed = 0;
+      let threadsMissing = 0;
+      for (const task of tasks) {
+        if (!task.thread_id) {
+          threadsMissing++;
+          continue;
+        }
+        const thread = await interaction.guild.channels.fetch(task.thread_id).catch(() => null);
+        if (!thread || !thread.isThread()) {
+          threadsMissing++;
+          continue;
+        }
+
+        threadsProcessed++;
+        let lastId = undefined;
+        while (true) {
+          const batch = await thread.messages.fetch({ limit: 100, before: lastId }).catch(() => null);
+          if (!batch || batch.size === 0) break;
+          const sorted = Array.from(batch.values()).sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+          for (const msg of sorted) {
+            try {
+              const attachments = msg.attachments?.size > 0
+                ? JSON.stringify(Array.from(msg.attachments.values()).map(a => ({ url: a.url, name: a.name, size: a.size })))
+                : null;
+              db.prepare(`
+                INSERT OR REPLACE INTO admin_task_thread_messages 
+                (message_id, task_id, thread_id, author_id, author_tag, content, timestamp, attachments)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(
+                msg.id,
+                task.task_id,
+                thread.id,
+                msg.author?.id || 'unknown',
+                msg.author?.tag || 'unknown',
+                msg.content || '',
+                msg.createdTimestamp || Date.now(),
+                attachments
+              );
+              totalArchived++;
+            } catch (e) {
+              logger.warn(`Backfill: Failed to archive message ${msg.id} in thread ${thread.id}:`, e);
+            }
+          }
+          lastId = sorted[0]?.id;
+          await new Promise(r => setTimeout(r, 250)); // small delay to respect rate limits
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      return interaction.editReply(`✅ Backfill complete. Threads processed: ${threadsProcessed}, missing/inaccessible: ${threadsMissing}. Messages archived: ${totalArchived}.`);
+    } catch (error) {
+      logger.error('Error backfilling messages:', error);
+      if (interaction.deferred) {
+        return interaction.editReply('❌ Backfill failed: ' + error.message);
+      } else {
+        return interaction.reply({ content: '❌ Backfill failed: ' + error.message, ephemeral: true });
       }
     }
   }
