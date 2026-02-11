@@ -799,6 +799,42 @@ function getPreviousDayMessages(db, guildId, channelId = null) {
   }
 }
 
+// Get messages between two dates (YYYY-MM-DD strings or timestamps)
+function getMessagesByDateRange(db, guildId, channelId = null, fromDate, toDate) {
+  try {
+    const fromTs = typeof fromDate === 'number' ? fromDate : new Date(fromDate + 'T00:00:00').getTime();
+    const toTs = typeof toDate === 'number' ? toDate : new Date(toDate + 'T23:59:59.999').getTime();
+
+    if (isNaN(fromTs) || isNaN(toTs)) return [];
+
+    let query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp >= ? AND timestamp <= ?';
+    let params = [guildId, fromTs, toTs];
+
+    if (channelId) {
+      query += ' AND channel_id = ?';
+      params.push(channelId);
+    }
+
+    query += ' ORDER BY timestamp ASC';
+    return db.prepare(query).all(...params);
+  } catch (error) {
+    console.error('Error getting messages by date range:', error);
+    return [];
+  }
+}
+
+// Count messages since a given timestamp (used to check if new activity exists)
+function getMessageCountSince(db, guildId, channelId, sinceTimestamp) {
+  try {
+    let query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND channel_id = ? AND timestamp > ?';
+    const rows = db.prepare(query).all(guildId, channelId, sinceTimestamp);
+    return rows ? rows.length : 0;
+  } catch (error) {
+    console.error('Error counting messages since timestamp:', error);
+    return 0;
+  }
+}
+
 // Get messages from specified source channels for the last X hours
 async function getMessagesFromSourceChannels(db, guild, hours = 24) {
   try {
@@ -1886,6 +1922,8 @@ module.exports = {
   generateOfflineSummary,
   generateChatSummary,
   getRecentMessages,
+  getMessagesByDateRange,
+  getMessageCountSince,
   getPreviousDayMessages,
   getMessagesFromSourceChannels,
   getPreviousDaySummary,

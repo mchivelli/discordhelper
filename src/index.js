@@ -22,7 +22,7 @@ const db = require('./utils/db');
 console.log('Database loaded');
 
 console.log('Loading AI utilities...');
-const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getPreviousDayMessages, getMessagesFromSourceChannels, getPreviousDaySummary, saveChatSummary } = require('./utils/ai');
+const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getMessagesByDateRange, getMessageCountSince, getPreviousDayMessages, getMessagesFromSourceChannels, getPreviousDaySummary, saveChatSummary, getExistingSummaries } = require('./utils/ai');
 console.log('AI utilities loaded');
 
 console.log('Loading patch utilities...');
@@ -185,106 +185,105 @@ client.on(Events.ClientReady, () => {
     });
   });
 
-  // Set up daily automatic chat summarization
+  // Set up daily per-channel automatic chat summarization
+  // Configure via env: AUTO_SUMMARY_CHANNELS=channelId1,channelId2,...
+  // Posts summaries to DAILY_SUMMARY_CHANNEL_ID (or system channel)
+  // Skips channels with no new messages since last summary
   cron.schedule(process.env.SUMMARY_CRON || '0 8 * * *', async () => {
     logger.info('Starting daily automatic chat summarization...');
 
+    const autoChannelsEnv = process.env.AUTO_SUMMARY_CHANNELS || process.env.DAILY_SUMMARY_SOURCE_CHANNELS;
+    if (!autoChannelsEnv) {
+      logger.info('No AUTO_SUMMARY_CHANNELS configured, skipping auto-summary');
+      return;
+    }
+
+    const channelIds = autoChannelsEnv.split(',').map(s => s.trim()).filter(Boolean);
+    if (channelIds.length === 0) {
+      logger.info('AUTO_SUMMARY_CHANNELS is empty, skipping');
+      return;
+    }
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateStr = yesterday.toISOString().split('T')[0];
+
     for (const guild of client.guilds.cache.values()) {
-      try {
-        // Get messages from previous day only (00:00–23:59) with optional source channel filtering
-        let messages = [];
-        const sourceChannelsEnv = process.env.DAILY_SUMMARY_SOURCE_CHANNELS;
-        if (sourceChannelsEnv) {
-          const sourceChannels = sourceChannelsEnv.split(',').map(s => s.trim()).filter(Boolean);
-          if (sourceChannels.length > 0) {
-            for (const channelId of sourceChannels) {
-              const chMsgs = getPreviousDayMessages(db, guild.id, channelId);
-              if (chMsgs?.length) messages.push(...chMsgs);
-            }
-            // Ensure chronological order
-            messages.sort((a, b) => a.timestamp - b.timestamp);
-            logger.info(`Using configured source channels for summarization: ${sourceChannels.length} channel(s)`);
-          } else {
-            messages = getPreviousDayMessages(db, guild.id, null);
+      let summarized = 0;
+      let skipped = 0;
+
+      for (const chId of channelIds) {
+        try {
+          const channel = guild.channels.cache.get(chId);
+          if (!channel) continue;
+
+          // Get yesterday's messages for this specific channel
+          const messages = getPreviousDayMessages(db, guild.id, chId);
+
+          if (!messages || messages.length < 5) {
+            logger.info(`Auto-summary: skipping #${channel.name} — only ${messages?.length || 0} messages yesterday`);
+            skipped++;
+            continue;
           }
-        } else {
-          messages = getPreviousDayMessages(db, guild.id, null);
+
+          // Check if we already have a summary for this channel+date (avoid duplicate runs)
+          const existing = getExistingSummaries(db, guild.id, chId, 2);
+          if (existing && existing.some(s => s.date === dateStr)) {
+            logger.info(`Auto-summary: skipping #${channel.name} — summary already exists for ${dateStr}`);
+            skipped++;
+            continue;
+          }
+
+          // Generate per-channel summary
+          logger.info(`Auto-summary: generating for #${channel.name} (${messages.length} messages)`);
+          const { summary, modelUsed } = await generateChatSummary(messages, 'Yesterday', `#${channel.name}`);
+
+          // Save with channel_id so /ask hybrid strategy can find it
+          saveChatSummary(db, guild.id, chId, summary, messages.length, dateStr, modelUsed);
+          summarized++;
+
+        } catch (error) {
+          logger.error(`Auto-summary error for channel ${chId} in ${guild.name}:`, error);
         }
+      }
 
-        if (!messages || messages.length < 10) {
-          logger.info(`Skipping summary for ${guild.name}: insufficient messages (${messages?.length || 0})`);
-          continue;
-        }
-
-        // Get previous day's summary for context
-        const previousSummary = await getPreviousDaySummary(db, guild.id);
-
-        // Generate summary with previous day context
-        logger.info(`Generating automatic summary for ${guild.name} (${messages.length} messages)`);
-        const { summary, modelUsed, messagesUsed } = await generateChatSummary(messages, 'Yesterday', guild.name, previousSummary);
-
-        // Save to database with yesterday's date
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const dateStr = yesterday.toISOString().split('T')[0];
-        saveChatSummary(db, guild.id, null, summary, messages.length, dateStr, modelUsed);
-
-        // Find target channel - prioritize configured daily summary channel
+      // Post a digest to the summary channel if anything was summarized
+      if (summarized > 0) {
         let targetChannel = null;
-
-        // First, try to find the configured daily summary channel
         if (process.env.DAILY_SUMMARY_CHANNEL_ID) {
           targetChannel = guild.channels.cache.get(process.env.DAILY_SUMMARY_CHANNEL_ID);
-          if (targetChannel) {
-            logger.info(`Using configured daily summary channel: #${targetChannel.name}`);
-          } else {
-            logger.warn(`Configured daily summary channel ID ${process.env.DAILY_SUMMARY_CHANNEL_ID} not found in ${guild.name}`);
-          }
         }
-
-        // Fallback to system channel or first available text channel
-        if (!targetChannel) {
-          targetChannel = guild.systemChannel;
-          if (targetChannel) {
-            logger.info(`Using system channel: #${targetChannel.name}`);
-          }
-        }
-
+        if (!targetChannel) targetChannel = guild.systemChannel;
         if (!targetChannel) {
           targetChannel = guild.channels.cache.find(c =>
-            c.type === 0 && // Text channel
-            c.permissionsFor(guild.members.me)?.has(['SendMessages', 'EmbedLinks'])
+            c.type === 0 && c.permissionsFor(guild.members.me)?.has(['SendMessages', 'EmbedLinks'])
           );
-          if (targetChannel) {
-            logger.info(`Using first available text channel: #${targetChannel.name}`);
-          }
         }
 
         if (targetChannel) {
-          const description = summary;
+          const channelList = channelIds
+            .map(id => guild.channels.cache.get(id))
+            .filter(Boolean)
+            .map(ch => {
+              const msgs = getPreviousDayMessages(db, guild.id, ch.id);
+              return msgs && msgs.length >= 5 ? `<#${ch.id}> (${msgs.length} msgs)` : null;
+            })
+            .filter(Boolean)
+            .join('\n');
 
           const embed = new EmbedBuilder()
-            .setTitle('📊 Daily Chat Summary')
-            .setDescription(description)
+            .setTitle(`Daily Summary — ${dateStr}`)
+            .setDescription(`Generated summaries for ${summarized} channel(s), skipped ${skipped}.\n\n${channelList}`)
             .setColor(0x3498db)
             .setTimestamp()
-            .setFooter({
-              text: `${messages.length} messages processed • Use /summarize history to view more`,
-              iconURL: client.user.displayAvatarURL()
-            });
+            .setFooter({ text: 'Use /ask to query these summaries', iconURL: client.user.displayAvatarURL() });
 
           await targetChannel.send({ embeds: [embed] });
-          logger.info(`Sent automatic summary to ${guild.name} #${targetChannel.name}`);
-        } else {
-          logger.warn(`No suitable channel found for automatic summary in ${guild.name}`);
         }
-
-      } catch (error) {
-        logger.error(`Error generating automatic summary for guild ${guild.name}:`, error);
       }
-    }
 
-    logger.info('Daily automatic chat summarization completed');
+      logger.info(`Auto-summary done for ${guild.name}: ${summarized} summarized, ${skipped} skipped`);
+    }
   });
 
 
@@ -435,11 +434,23 @@ client.on(Events.InteractionCreate, async interaction => {
           const db = require('./utils/db');
           const { buildIssueEmbed, issueActionRow, buildDetailsEmbed } = require('./components/issue-components');
 
-          // Fetch the issue; fallback by message id if id lookup fails
+          // Fetch the issue with robust multi-strategy lookup
           let issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
-          if (!issue && sourceMessageId) {
+          if (!issue) {
+            logger.warn(`Issue details modal: not found by id=${issueId}, trying fallbacks...`);
             const allIssues = db.prepare('SELECT * FROM issues').all();
-            issue = allIssues.find(i => i.message_id === sourceMessageId);
+            // Try by message_id
+            if (sourceMessageId) {
+              issue = allIssues.find(i => i.message_id === sourceMessageId);
+            }
+            // Try by thread_id matching current channel
+            if (!issue && interaction.channel?.isThread()) {
+              issue = allIssues.find(i => i.thread_id === interaction.channelId);
+            }
+            // Try embed footer from the thread messages (if we have any)
+            if (!issue) {
+              issue = allIssues.find(i => i.id && i.id.includes(issueId));
+            }
           }
           if (!issue) {
             return interaction.reply({ content: 'Issue not found.', ephemeral: true });
@@ -1299,10 +1310,40 @@ View with \`/task list id:${taskId}\`.`
           const { buildIssueEmbed, issueActionRow, createIssueDetailsModal } = require('./components/issue-components');
           const { ISSUE_STATUS, PREFIXES } = require('./utils/constants');
 
+          // Helper: robust issue lookup with multiple fallback strategies
+          const findIssue = (id, msgId) => {
+            // Strategy 1: direct ID lookup
+            let found = db.prepare('SELECT * FROM issues WHERE id = ?').get(id);
+            if (found) return found;
+            logger.warn(`Issue not found by id=${id}, trying fallbacks...`);
+            // Strategy 2: search all issues
+            const allIssues = db.prepare('SELECT * FROM issues').all();
+            // Try by message_id (compact message)
+            if (msgId) {
+              found = allIssues.find(i => i.message_id === msgId);
+              if (found) return found;
+            }
+            // Try by thread_id matching current channel
+            if (interaction.channel?.isThread()) {
+              found = allIssues.find(i => i.thread_id === interaction.channelId);
+              if (found) return found;
+            }
+            // Try embed footer
+            if (interaction.message?.embeds?.length) {
+              const footerText = interaction.message.embeds[0]?.footer?.text || '';
+              const match = footerText.match(/Issue ID:\s*(\S+)/i);
+              if (match && match[1]) {
+                found = allIssues.find(i => i.id === match[1]);
+                if (found) return found;
+              }
+            }
+            return null;
+          };
+
           if (action === 'details') {
             // Fetch existing details to pre-fill modal when editing
             let existingDetails = null;
-            const existingIssue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+            const existingIssue = findIssue(issueId, sourceMessageId);
             if (existingIssue?.details) {
               try {
                 existingDetails = typeof existingIssue.details === 'string'
@@ -1314,28 +1355,16 @@ View with \`/task list id:${taskId}\`.`
             return interaction.showModal(modal);
           }
 
-          // Load issue
-          let issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
-          if (!issue) {
-            const tryMsgId = sourceMessageId || interaction.message?.id;
-            if (tryMsgId) {
-              const allIssues = db.prepare('SELECT * FROM issues').all();
-              issue = allIssues.find(i => i.message_id === tryMsgId);
-            }
-          }
-          // Deep fallback: reconstruct minimal issue from embed footer if DB is missing
-          if (!issue && interaction.message?.embeds?.length) {
-            const footerText = interaction.message.embeds[0]?.footer?.text || '';
-            const match = footerText.match(/Issue ID:\s*(\S+)/i);
-            if (match && match[1]) {
-              issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(match[1]);
-            }
-          }
-          // If still not found, try to rebuild from the visible message data
+          // Load issue using robust lookup
+          let issue = findIssue(issueId, sourceMessageId);
+          // Deep fallback: rebuild from the visible message data
           if (!issue && interaction.message) {
-            const title = interaction.message.embeds?.[0]?.title?.replace(/^.*?\s/, '') || 'Untitled Issue';
+            const title = interaction.message.embeds?.[0]?.title || 'Untitled Issue';
             const description = interaction.message.embeds?.[0]?.description || '';
-            const channelId = interaction.channelId;
+            // Determine correct channel/thread IDs from context
+            const isInThread = interaction.channel?.isThread();
+            const threadId = isInThread ? interaction.channelId : null;
+            const parentChannelId = isInThread ? interaction.channel.parentId : interaction.channelId;
             const rebuilt = {
               id: issueId,
               title,
@@ -1345,9 +1374,9 @@ View with \`/task list id:${taskId}\`.`
               reporter_id: interaction.user.id,
               assignee_id: null,
               guild_id: interaction.guildId,
-              channel_id: channelId,
-              thread_id: null,
-              message_id: interaction.message.id,
+              channel_id: parentChannelId,
+              thread_id: threadId,
+              message_id: null,
               details: null,
               created_at: Date.now(),
               updated_at: Date.now()
@@ -1356,6 +1385,7 @@ View with \`/task list id:${taskId}\`.`
               db.prepare('INSERT OR REPLACE INTO issues (id, title, description, status, severity, reporter_id, assignee_id, guild_id, channel_id, thread_id, message_id, details, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
                 .run(rebuilt.id, rebuilt.title, rebuilt.description, rebuilt.status, rebuilt.severity, rebuilt.reporter_id, rebuilt.assignee_id, rebuilt.guild_id, rebuilt.channel_id, rebuilt.thread_id, rebuilt.message_id, rebuilt.details, rebuilt.created_at, rebuilt.updated_at);
               issue = rebuilt;
+              logger.warn(`Rebuilt issue ${issueId} from embed data`);
             } catch (_) { }
           }
           if (!issue) {
@@ -1373,6 +1403,9 @@ View with \`/task list id:${taskId}\`.`
               .run(newStatus, Date.now(), issueId);
           }
 
+          // Defer reply BEFORE any async operations to prevent "Thread is archived" crash
+          await interaction.deferReply({ ephemeral: true });
+
           const updated = db.prepare('SELECT * FROM issues WHERE id = ?').get(issue.id) || issue;
           const embed = buildIssueEmbed(updated, null);
 
@@ -1385,26 +1418,60 @@ View with \`/task list id:${taskId}\`.`
             logger.warn('Could not update thread message:', e.message);
           }
 
+          // Determine status prefix for compact message
+          let statusPrefix;
+          if (newStatus === ISSUE_STATUS.SOLVED) statusPrefix = PREFIXES.ISSUE.SOLVED;
+          else if (newStatus === ISSUE_STATUS.BUG) statusPrefix = PREFIXES.ISSUE.BUG;
+          else statusPrefix = PREFIXES.ISSUE.OPEN;
+
           // Update compact message in main channel
+          // Try stored IDs first, then fall back to finding via thread parent
+          let compactUpdated = false;
           if (updated.message_id && updated.channel_id) {
             try {
-              const mainChannel = await interaction.client.channels.fetch(updated.channel_id);
-              const mainMessage = await mainChannel.messages.fetch(updated.message_id);
-
-              let statusPrefix;
-              if (newStatus === ISSUE_STATUS.SOLVED) statusPrefix = PREFIXES.ISSUE.SOLVED;
-              else if (newStatus === ISSUE_STATUS.BUG) statusPrefix = PREFIXES.ISSUE.BUG;
-              else statusPrefix = PREFIXES.ISSUE.OPEN;
-
-              const severityLabel = (updated.severity || 'normal').charAt(0).toUpperCase() + (updated.severity || 'normal').slice(1);
-              const desc = updated.description || '';
-              const descSnippet = desc.length > 80 ? desc.substring(0, 77) + '...' : desc;
-              const compactMessage = descSnippet
-                ? `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\`\n> ${descSnippet}`
-                : `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\``;
-              await mainMessage.edit(compactMessage);
+              const mainChannel = await interaction.client.channels.fetch(updated.channel_id).catch(() => null);
+              if (mainChannel && !mainChannel.isThread()) {
+                const mainMessage = await mainChannel.messages.fetch(updated.message_id).catch(() => null);
+                if (mainMessage) {
+                  const severityLabel = (updated.severity || 'normal').charAt(0).toUpperCase() + (updated.severity || 'normal').slice(1);
+                  const desc = updated.description || '';
+                  const descSnippet = desc.length > 80 ? desc.substring(0, 77) + '...' : desc;
+                  const compactMessage = descSnippet
+                    ? `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\`\n> ${descSnippet}`
+                    : `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\``;
+                  await mainMessage.edit(compactMessage);
+                  compactUpdated = true;
+                }
+              }
             } catch (e) {
-              logger.warn('Could not update main channel message:', e.message);
+              logger.warn('Could not update main channel message via stored IDs:', e.message);
+            }
+          }
+          // Fallback: find compact message via thread parent channel
+          if (!compactUpdated && interaction.channel?.isThread()) {
+            try {
+              const parentChannel = await interaction.client.channels.fetch(interaction.channel.parentId).catch(() => null);
+              if (parentChannel) {
+                // The compact message is the thread's starter message (the one the thread was created on)
+                const starterMessage = await interaction.channel.fetchStarterMessage().catch(() => null);
+                if (starterMessage) {
+                  const severityLabel = (updated.severity || 'normal').charAt(0).toUpperCase() + (updated.severity || 'normal').slice(1);
+                  const desc = updated.description || '';
+                  const descSnippet = desc.length > 80 ? desc.substring(0, 77) + '...' : desc;
+                  const compactMessage = descSnippet
+                    ? `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\`\n> ${descSnippet}`
+                    : `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\``;
+                  await starterMessage.edit(compactMessage);
+                  // Fix stored IDs for future lookups
+                  if (!updated.message_id || !updated.channel_id || updated.channel_id === interaction.channelId) {
+                    db.prepare('UPDATE issues SET channel_id = ?, message_id = ?, thread_id = ?, updated_at = ? WHERE id = ?')
+                      .run(parentChannel.id, starterMessage.id, interaction.channelId, Date.now(), updated.id);
+                  }
+                  compactUpdated = true;
+                }
+              }
+            } catch (e) {
+              logger.warn('Could not update compact message via thread parent:', e.message);
             }
           }
 
@@ -1422,15 +1489,6 @@ View with \`/task list id:${taskId}\`.`
           }
           if (thread && thread.isThread()) {
             try {
-                let statusPrefix;
-                if (newStatus === ISSUE_STATUS.SOLVED) {
-                  statusPrefix = PREFIXES.ISSUE.SOLVED;
-                } else if (newStatus === ISSUE_STATUS.BUG) {
-                  statusPrefix = PREFIXES.ISSUE.BUG;
-                } else {
-                  statusPrefix = PREFIXES.ISSUE.OPEN;
-                }
-
                 const newThreadName = `${statusPrefix} ${updated.title.substring(0, 100 - statusPrefix.length - 1)}`;
 
                 // Unarchive if needed before renaming
@@ -1472,8 +1530,12 @@ View with \`/task list id:${taskId}\`.`
             }
           }
 
-          return interaction.reply({ content: `Status updated to ${newStatus}.`, ephemeral: true });
+          return interaction.editReply({ content: `Status updated to ${newStatus}.` });
         } catch (error) {
+          logger.error('Error updating issue status:', error);
+          if (interaction.deferred) {
+            return interaction.editReply({ content: `Failed to update issue: ${error.message}` });
+          }
           return interaction.reply({ content: `Failed to update issue: ${error.message}`, ephemeral: true });
         }
       }

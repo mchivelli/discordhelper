@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType, PermissionsBitField } = require('discord.js');
-const { answerQuestionWithContext, getRecentMessages, getChannelMessages } = require('../utils/ai');
+const { answerQuestionWithContext, getRecentMessages, getMessagesByDateRange, getChannelMessages } = require('../utils/ai');
 const db = require('../utils/db');
 const logger = require('../utils/logger');
 
@@ -10,7 +10,7 @@ module.exports = {
     .addSubcommand(subcommand =>
       subcommand
         .setName('channel')
-        .setDescription('Ask about a specific channel')
+        .setDescription('Ask about a specific channel (or up to 3)')
         .addStringOption(option =>
           option.setName('question')
             .setDescription('Your question or what you want to know')
@@ -19,6 +19,16 @@ module.exports = {
         .addChannelOption(option =>
           option.setName('channel')
             .setDescription('Channel to analyze (defaults to current)')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(false))
+        .addChannelOption(option =>
+          option.setName('channel2')
+            .setDescription('Second channel to include')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(false))
+        .addChannelOption(option =>
+          option.setName('channel3')
+            .setDescription('Third channel to include')
             .addChannelTypes(ChannelType.GuildText)
             .setRequired(false))
         .addIntegerOption(option =>
@@ -32,6 +42,14 @@ module.exports = {
             .setDescription('Number of recent messages (10-1000)')
             .setMinValue(10)
             .setMaxValue(1000)
+            .setRequired(false))
+        .addStringOption(option =>
+          option.setName('from_date')
+            .setDescription('Start date (YYYY-MM-DD)')
+            .setRequired(false))
+        .addStringOption(option =>
+          option.setName('to_date')
+            .setDescription('End date (YYYY-MM-DD)')
             .setRequired(false)))
     .addSubcommand(subcommand =>
       subcommand
@@ -53,6 +71,14 @@ module.exports = {
             .setDescription('Number of recent messages (10-1000)')
             .setMinValue(10)
             .setMaxValue(1000)
+            .setRequired(false))
+        .addStringOption(option =>
+          option.setName('from_date')
+            .setDescription('Start date (YYYY-MM-DD)')
+            .setRequired(false))
+        .addStringOption(option =>
+          option.setName('to_date')
+            .setDescription('End date (YYYY-MM-DD)')
             .setRequired(false))),
 
   async execute(interaction) {
@@ -66,19 +92,33 @@ module.exports = {
       const question = interaction.options.getString('question');
       const hours = interaction.options.getInteger('hours');
       const messageLimit = interaction.options.getInteger('messages');
+      const fromDate = interaction.options.getString('from_date');
+      const toDate = interaction.options.getString('to_date');
 
-      // Validate: can't specify both hours and messages
-      if (hours && messageLimit) {
+      // Validate: only one time-scoping method allowed
+      const timeMethodCount = [hours, messageLimit, fromDate || toDate].filter(Boolean).length;
+      if (timeMethodCount > 1) {
         return interaction.editReply({
-          content: '❌ Please specify either `hours` OR `messages`, not both.',
+          content: '❌ Please specify only one of: `hours`, `messages`, or `from_date`/`to_date`.',
           ephemeral: true
         });
+      }
+
+      // Validate date format if provided
+      if (fromDate && !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+        return interaction.editReply({ content: '❌ `from_date` must be YYYY-MM-DD format.', ephemeral: true });
+      }
+      if (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+        return interaction.editReply({ content: '❌ `to_date` must be YYYY-MM-DD format.', ephemeral: true });
       }
 
       // Set defaults
       const hoursToLookBack = hours || 24;
       const guildId = interaction.guild.id;
       const guildName = interaction.guild.name;
+      const useDateRange = fromDate || toDate;
+      const effectiveFrom = fromDate || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const effectiveTo = toDate || new Date().toISOString().split('T')[0];
 
       let messages = [];
       let channelId = null;
@@ -87,20 +127,47 @@ module.exports = {
       let timeRange = '';
 
       if (subcommand === 'channel') {
-        // Channel-specific analysis
-        const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
-        channelId = targetChannel.id;
-        channelName = targetChannel.name;
-        scope = `#${channelName}`;
+        // Collect up to 3 channels
+        const ch1 = interaction.options.getChannel('channel') || interaction.channel;
+        const ch2 = interaction.options.getChannel('channel2');
+        const ch3 = interaction.options.getChannel('channel3');
+        const channels = [ch1, ch2, ch3].filter(Boolean);
+        const uniqueChannels = [...new Map(channels.map(c => [c.id, c])).values()];
 
-        if (messageLimit) {
-          // Get specific number of messages
-          timeRange = `last ${messageLimit} messages`;
-          messages = await getRecentMessages(db, guildId, channelId, null, messageLimit);
+        if (uniqueChannels.length === 1) {
+          channelId = uniqueChannels[0].id;
+          channelName = uniqueChannels[0].name;
+          scope = `#${channelName}`;
         } else {
-          // Get messages by time
+          channelName = uniqueChannels.map(c => c.name).join(', ');
+          scope = uniqueChannels.map(c => `#${c.name}`).join(' + ');
+        }
+
+        // Fetch messages from each channel
+        for (const ch of uniqueChannels) {
+          let chMessages = [];
+          if (useDateRange) {
+            chMessages = getMessagesByDateRange(db, guildId, ch.id, effectiveFrom, effectiveTo);
+          } else if (messageLimit) {
+            chMessages = await getRecentMessages(db, guildId, ch.id, null, messageLimit);
+          } else {
+            chMessages = await getRecentMessages(db, guildId, ch.id, hoursToLookBack);
+          }
+          if (chMessages?.length) messages.push(...chMessages);
+        }
+
+        // Sort combined messages chronologically and dedup
+        if (uniqueChannels.length > 1) {
+          messages.sort((a, b) => a.timestamp - b.timestamp);
+        }
+
+        // Build time range label
+        if (useDateRange) {
+          timeRange = `${effectiveFrom} to ${effectiveTo}`;
+        } else if (messageLimit) {
+          timeRange = `last ${messageLimit} messages`;
+        } else {
           timeRange = `last ${hoursToLookBack} hour${hoursToLookBack > 1 ? 's' : ''}`;
-          messages = await getRecentMessages(db, guildId, channelId, hoursToLookBack);
         }
 
       } else if (subcommand === 'server') {
@@ -114,7 +181,10 @@ module.exports = {
 
         scope = `server: ${guildName}`;
 
-        if (messageLimit) {
+        if (useDateRange) {
+          timeRange = `${effectiveFrom} to ${effectiveTo}`;
+          messages = getMessagesByDateRange(db, guildId, null, effectiveFrom, effectiveTo);
+        } else if (messageLimit) {
           timeRange = `last ${messageLimit} messages`;
           messages = await getRecentMessages(db, guildId, null, null, messageLimit);
         } else {
@@ -142,7 +212,7 @@ module.exports = {
         db,
         guildId,
         channelId,
-        hours: messageLimit ? null : hoursToLookBack
+        hours: (useDateRange || messageLimit) ? null : hoursToLookBack
       };
 
       // Call AI to answer the question

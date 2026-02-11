@@ -259,6 +259,9 @@ class QueryBuilder {
     // Handle common SELECT patterns
     if (this.query.toLowerCase().includes('where id =')) {
       const result = items.find(item => item.id === params[0]) || null;
+      if (this.tableName === 'issues' && !result) {
+        console.log(`DEBUG: Issue lookup MISS - searching for id="${params[0]}", available IDs: ${items.map(i => i.id).join(', ') || '(none)'}`);
+      }
       if (this.tableName === 'task_suggestions') {
         console.log(`DEBUG: Looking for suggestion ID "${params[0]}" in table ${this.tableName}`);
         console.log('Available suggestions:', items.map(item => ({id: item.id, task_id: item.task_id})));
@@ -907,6 +910,24 @@ class QueryBuilder {
     // Parse UPDATE queries based on common patterns
     if (this.tableName === 'issues') {
       const idArgIndex = (this.query.toLowerCase().includes('where id =')) ? -1 : null;
+      // Update channel_id + message_id + thread_id (compact message fix)
+      if (this.query.toLowerCase().includes('set channel_id') && this.query.toLowerCase().includes('message_id') && this.query.toLowerCase().includes('thread_id')) {
+        const channelId = args[0];
+        const messageId = args[1];
+        const threadId = args[2];
+        const updatedAt = args[3] || Date.now();
+        const id = args[4];
+        const issue = items.find(i => i.id === id);
+        if (issue) {
+          issue.channel_id = channelId;
+          issue.message_id = messageId;
+          issue.thread_id = threadId;
+          issue.updated_at = updatedAt;
+          saveItem(this.tableName, issue);
+          updatedCount = 1;
+        }
+        return { changes: updatedCount };
+      }
       // Update thread/message ids
       if (this.query.toLowerCase().includes('set thread_id') && this.query.toLowerCase().includes('message_id')) {
         const threadId = args[0];
