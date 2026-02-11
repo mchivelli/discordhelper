@@ -14,11 +14,6 @@ const SUMMARY_MAX_CHUNKS = parseInt(process.env.SUMMARY_MAX_CHUNKS || '8', 10);
 const SUMMARY_PER_MESSAGE_CHAR_LIMIT = parseInt(process.env.SUMMARY_PER_MESSAGE_CHAR_LIMIT || '400', 10);
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-// Ask command configuration
-const ASK_TOKEN_BUDGET = parseInt(process.env.ASK_TOKEN_BUDGET || '8000', 10);
-const ASK_MAX_RESPONSE_TOKENS = parseInt(process.env.ASK_MAX_RESPONSE_TOKENS || '1000', 10);
-const ASK_MODEL = process.env.ASK_MODEL || SUMMARIZATION_MODEL;
-
 // Helper function to make API requests to the LLM
 async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throwOnError = false) {
   // Discord-optimized fallback responses if API call fails or is not configured
@@ -36,20 +31,20 @@ async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throw
     'enhanceTaskNote': messages[1]?.content?.replace('Stage: ', '').replace('\nCompletion Notes: ', '').split('\n\nPlease enhance')[0] || 'Completed successfully.',
     'enhanceTaskDescription': messages[1]?.content?.replace('Task Name: ', '').replace('\nOriginal Description: ', '').split('\n\nPlease enhance')[0] || 'Task description unavailable.'
   };
-
+  
   // Check if API key is configured
   if (!API_KEY) {
     console.warn('OpenRouter API key not configured. Using fallback responses.');
     // Determine which function is calling based on message content
     for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-      if (messages[0]?.content?.includes(funcName) ||
-        messages[1]?.content?.includes(funcName)) {
+      if (messages[0]?.content?.includes(funcName) || 
+          messages[1]?.content?.includes(funcName)) {
         return fallback;
       }
     }
     return fallbackResponses.getPrereqs; // Default fallback
   }
-
+  
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
@@ -65,7 +60,7 @@ async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throw
         max_tokens: maxTokens
       })
     });
-
+    
     if (!res.ok) {
       const err = await res.text();
       console.error(`OpenRouter error: ${err}`);
@@ -74,34 +69,34 @@ async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throw
       }
       // Use fallback response based on function name
       for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-        if (messages[0]?.content?.includes(funcName) ||
-          messages[1]?.content?.includes(funcName)) {
+        if (messages[0]?.content?.includes(funcName) || 
+            messages[1]?.content?.includes(funcName)) {
           return fallback;
         }
       }
       return fallbackResponses.getPrereqs; // Default fallback
     }
-
+    
     const json = await res.json();
     if (!json.choices?.length) {
       console.error('No AI response');
       // Use fallback response
       for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-        if (messages[0]?.content?.includes(funcName) ||
-          messages[1]?.content?.includes(funcName)) {
+        if (messages[0]?.content?.includes(funcName) || 
+            messages[1]?.content?.includes(funcName)) {
           return fallback;
         }
       }
       return fallbackResponses.getPrereqs; // Default fallback
     }
-
+    
     return json.choices[0].message.content;
   } catch (error) {
     console.error('Error calling AI API:', error);
     // Use fallback response
     for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-      if (messages[0]?.content?.includes(funcName) ||
-        messages[1]?.content?.includes(funcName)) {
+      if (messages[0]?.content?.includes(funcName) || 
+          messages[1]?.content?.includes(funcName)) {
         return fallback;
       }
     }
@@ -111,7 +106,7 @@ async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throw
 
 async function getPrereqs(taskName, stageName, desc) {
   const prompt = `Task: ${taskName}\nStage: ${stageName}\nDescription: ${desc}\nList the prerequisites and necessities succinctly.`;
-
+  
   return callLLMAPI([{ role: 'user', content: prompt }]);
 }
 
@@ -122,16 +117,16 @@ async function getPrereqs(taskName, stageName, desc) {
  */
 async function enhanceAnnouncement(content) {
   const messages = [
-    {
-      role: 'system',
+    { 
+      role: 'system', 
       content: 'You are a professional communications expert. Your task is to improve the provided announcement to make it clearer, more engaging, and professional while preserving all key information. Keep the same length or shorter.'
     },
-    {
-      role: 'user',
+    { 
+      role: 'user', 
       content: `Please enhance this announcement: ${content}`
     }
   ];
-
+  
   return callLLMAPI(messages, 400);
 }
 
@@ -164,12 +159,12 @@ async function getSuggestions(partial, context) {
       { value: 'Write unit and integration tests', description: 'Ensure code quality and prevent regressions' }
     ]
   };
-
+  
   // If we have examples for this context, use them first
   if (exampleSuggestions[context] && partial.length < 3) {
     return exampleSuggestions[context];
   }
-
+  
   // Otherwise, use AI for more contextual suggestions
   const messages = [
     {
@@ -181,16 +176,16 @@ async function getSuggestions(partial, context) {
       content: `Partial input: "${partial}". Context: ${context}. Return only valid JSON array.`
     }
   ];
-
+  
   const result = await callLLMAPI(messages, 300);
-
+  
   // Extract the JSON array from the response
   try {
     // Find anything that looks like a JSON array
     const match = result.match(/\[\s*\{.*\}\s*\]/s);
     if (match) {
       return JSON.parse(match[0]);
-    }
+    } 
     // If no array found, try parsing the whole response
     return JSON.parse(result);
   } catch (error) {
@@ -209,11 +204,11 @@ async function getSuggestions(partial, context) {
  */
 async function generateTaskStages(taskName, description, deadline = '', generateInstructions = '') {
   let systemPrompt = 'You are a task management assistant for a Discord server. Generate 3-5 task stages that would help complete the given task successfully. Each stage should have a name and description. Add an emoji at the start of each stage name. Respond with a proper JSON array. Use different emojis for each stage.';
-
+  
   if (generateInstructions) {
     systemPrompt += ` Focus on the following specific instructions: ${generateInstructions}`;
   }
-
+  
   const messages = [
     {
       role: 'system',
@@ -224,7 +219,7 @@ async function generateTaskStages(taskName, description, deadline = '', generate
       content: `Task: ${taskName}\nDescription: ${description}${deadline ? `\nDeadline: ${deadline}` : ''}\n\nPlease suggest logical stages to complete this task. Format your response as a valid JSON array of objects, each with "name" and "description" properties. The name should start with an emoji. Do not use any text outside of the JSON array.`
     }
   ];
-
+  
   let result;
   try {
     result = await callLLMAPI(messages, 800);
@@ -240,13 +235,13 @@ async function generateTaskStages(taskName, description, deadline = '', generate
       { name: '🚀 Deployment', description: 'Release the completed work to the community.' }
     ];
   }
-
+  
   try {
     // Find anything that looks like a JSON array
     const match = result.match(/\[\s*\{.*\}\s*\]/s);
     if (match) {
       return JSON.parse(match[0]);
-    }
+    } 
     // If no array found, try parsing the whole response
     try {
       return JSON.parse(result);
@@ -287,7 +282,7 @@ async function enhanceTaskNote(notes, stageName) {
       content: `Stage: ${stageName}\nCompletion Notes: ${notes}\n\nPlease enhance these completion notes to be more informative and engaging for our Discord server. Keep it concise but comprehensive.`
     }
   ];
-
+  
   return callLLMAPI(messages, 300);
 }
 
@@ -308,7 +303,7 @@ async function enhanceTaskDescription(taskName, description) {
       content: `Task Name: ${taskName}\nOriginal Description: ${description}\n\nPlease enhance this task description to be more engaging, specific, and well-structured for our Discord server members. Keep it concise but informative.`
     }
   ];
-
+  
   return callLLMAPI(messages, 400);
 }
 
@@ -330,16 +325,16 @@ async function generateFollowUpTasks(taskName, description, completedStages = []
       content: `Completed Task: ${taskName}\nDescription: ${description}\nCompleted Stages: ${completedStages.map(s => s.name).join(', ')}\n\nPlease suggest follow-up tasks or next actions that would logically come after completing this task. Format your response as a valid JSON array of objects, each with "name" and "description" properties. The name should start with an emoji.`
     }
   ];
-
+  
   try {
     const result = await callLLMAPI(messages, 600);
-
+    
     // Parse the JSON response
     const match = result.match(/\[\s*\{.*\}\s*\]/s);
     if (match) {
       return JSON.parse(match[0]);
     }
-
+    
     try {
       return JSON.parse(result);
     } catch {
@@ -351,7 +346,7 @@ async function generateFollowUpTasks(taskName, description, completedStages = []
   } catch (error) {
     console.error('Failed to generate follow-up tasks:', error);
   }
-
+  
   // Return generic follow-up suggestions if AI fails
   return [
     { name: '📊 Review Results', description: 'Analyze the outcomes and gather feedback from the completed task.' },
@@ -367,31 +362,31 @@ async function generateFollowUpTasks(taskName, description, completedStages = []
  */
 async function checkAIStatus() {
   if (!API_KEY) {
-    return {
-      success: false,
+    return { 
+      success: false, 
       message: "AI services not configured: API key missing. Using fallback responses."
     };
   }
-
+  
   try {
     // Simple test call to verify API access
-    const result = await callLLMAPI([{
-      role: 'user',
-      content: 'Reply with OK if you can read this message.'
+    const result = await callLLMAPI([{ 
+      role: 'user', 
+      content: 'Reply with OK if you can read this message.' 
     }], 50);
-
+    
     const isWorking = result && (result.includes('OK') || result.includes('ok') || result.includes('Yes') || result.includes('yes'));
-
-    return {
-      success: isWorking,
-      message: isWorking
-        ? "AI services are configured and working properly."
-        : "AI services configured but not responding as expected. Check API key and model."
+    
+    return { 
+      success: isWorking, 
+      message: isWorking 
+        ? "AI services are configured and working properly." 
+        : "AI services configured but not responding as expected. Check API key and model." 
     };
   } catch (error) {
-    return {
-      success: false,
-      message: `AI services not working: ${error.message}. Using fallback responses.`
+    return { 
+      success: false, 
+      message: `AI services not working: ${error.message}. Using fallback responses.` 
     };
   }
 }
@@ -421,7 +416,7 @@ function storeChatMessage(db, message) {
       (id, message_id, channel_id, guild_id, user_id, username, content, timestamp, attachments)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-
+    
     stmt.run(
       messageData.id,
       messageData.message_id,
@@ -433,7 +428,7 @@ function storeChatMessage(db, message) {
       messageData.timestamp,
       messageData.attachments
     );
-
+    
     return true;
   } catch (error) {
     console.error('Error storing chat message:', error);
@@ -449,7 +444,7 @@ function generateOfflineSummary(messages, timeRange, context) {
   const userCounts = new Map();
   const wordCounts = new Map();
   const stop = new Set([
-    'the', 'and', 'for', 'you', 'are', 'with', 'that', 'this', 'have', 'from', 'was', 'but', 'not', 'your', 'just', 'they', 'can', 'all', 'like', 'get', 'about', 'what', 'when', 'why', 'who', 'how', 'where', 'then', 'than', 'has', 'had', 'did', 'does', 'don', 'got', 'its', 'it\'s', 'i\'m', 'i\'ll', 'we\'re', 'we\'ll', 'he', 'she', 'his', 'her', 'them', 'their', 'ours', 'mine', 'yours', 'its', 'it', 'to', 'of', 'in', 'on', 'at', 'as', 'is', 'be', 'or', 'an', 'a'
+    'the','and','for','you','are','with','that','this','have','from','was','but','not','your','just','they','can','all','like','get','about','what','when','why','who','how','where','then','than','has','had','did','does','don','got','its','it\'s','i\'m','i\'ll','we\'re','we\'ll','he','she','his','her','them','their','ours','mine','yours','its','it','to','of','in','on','at','as','is','be','or','an','a'
   ]);
 
   const sampleMessages = [];
@@ -548,6 +543,35 @@ function buildTranscript(lines, maxTokenBudget) {
   return { transcript: out.join('\n'), usedCount, fits: usedCount === lines.length };
 }
 
+function buildAnalysisTranscript(messages, maxTokenBudget = 12000) {
+  let usedTokens = 0;
+  const out = [];
+  let usedCount = 0;
+  
+  for (const m of messages) {
+    // Skip empty messages
+    if (!m.content || m.content.trim().length === 0) continue;
+    
+    // Compact format: username: content
+    const line = `${m.username}: ${m.content}`;
+    const tokenCount = estimateTokensFromText(line) + 1;
+    
+    if (maxTokenBudget && usedTokens + tokenCount > maxTokenBudget) break;
+    
+    usedTokens += tokenCount;
+    out.push(line);
+    usedCount++;
+  }
+  
+  return {
+    transcript: out.join('\n'),
+    usedCount,
+    totalMessages: messages.length,
+    tokenCount: usedTokens,
+    fits: usedCount === messages.length
+  };
+}
+
 async function summarizeChunk(transcript, chunkIndex, totalChunks, context) {
   const chunkPrompt = `You are summarizing Discord messages for ${context}.
 This is chunk ${chunkIndex} of ${totalChunks}. Read the compact transcript and produce 6-10 tagged bullet points using these tags:
@@ -580,7 +604,7 @@ async function generateChatSummary(messages, timeRange, context, previousSummary
     const userCounts = new Map();
     const wordCounts = new Map();
     const stop = new Set([
-      'the', 'and', 'for', 'you', 'are', 'with', 'that', 'this', 'have', 'from', 'was', 'but', 'not', 'your', 'just', 'they', 'can', 'all', 'like', 'get', 'about', 'what', 'when', 'why', 'who', 'how', 'where', 'then', 'than', 'has', 'had', 'did', 'does', 'don', 'got', 'its', 'it\'s', 'i\'m', 'i\'ll', 'we\'re', 'we\'ll', 'he', 'she', 'his', 'her', 'them', 'their', 'ours', 'mine', 'yours', 'its', 'it', 'to', 'of', 'in', 'on', 'at', 'as', 'is', 'be', 'or', 'an', 'a'
+      'the','and','for','you','are','with','that','this','have','from','was','but','not','your','just','they','can','all','like','get','about','what','when','why','who','how','where','then','than','has','had','did','does','don','got','its','it\'s','i\'m','i\'ll','we\'re','we\'ll','he','she','his','her','them','their','ours','mine','yours','its','it','to','of','in','on','at','as','is','be','or','an','a'
     ]);
     for (const m of messages) {
       const username = (m.username || 'user').toString();
@@ -690,40 +714,40 @@ Keep it ~200-300 words, concise, specific, and easy to scan.`;
 function getRecentMessages(db, guildId, channelId = null, hours = 24, messageLimit = null) {
   try {
     let query, params;
-
+    
     // If messageLimit is provided, get the most recent N messages
     if (messageLimit) {
       query = 'SELECT * FROM chat_messages WHERE guild_id = ?';
       params = [guildId];
-
+      
       if (channelId) {
         query += ' AND channel_id = ?';
         params.push(channelId);
       }
-
+      
       query += ' ORDER BY timestamp DESC LIMIT ?';
       params.push(messageLimit);
-
+      
       const stmt = db.prepare(query);
       const messages = stmt.all(...params);
-
+      
       // Reverse to get chronological order
       return messages.reverse();
-    }
+    } 
     // Otherwise, get messages from the last X hours
     else {
       const cutoffTime = Date.now() - (hours * 60 * 60 * 1000);
-
+      
       query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp > ?';
       params = [guildId, cutoffTime];
-
+      
       if (channelId) {
         query += ' AND channel_id = ?';
         params.push(channelId);
       }
-
+      
       query += ' ORDER BY timestamp ASC';
-
+      
       const stmt = db.prepare(query);
       return stmt.all(...params);
     }
@@ -739,29 +763,29 @@ function getPreviousDayMessages(db, guildId, channelId = null) {
     // Calculate yesterday's date range (00:00:00 to 23:59:59)
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-
+    
     const startOfYesterday = new Date(yesterday);
     startOfYesterday.setHours(0, 0, 0, 0);
-
+    
     const endOfYesterday = new Date(yesterday);
     endOfYesterday.setHours(23, 59, 59, 999);
-
+    
     const startTimestamp = startOfYesterday.getTime();
     const endTimestamp = endOfYesterday.getTime();
-
+    
     let query = 'SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp >= ? AND timestamp <= ?';
     let params = [guildId, startTimestamp, endTimestamp];
-
+    
     if (channelId) {
       query += ' AND channel_id = ?';
       params.push(channelId);
     }
-
+    
     query += ' ORDER BY timestamp ASC';
-
+    
     const stmt = db.prepare(query);
     return stmt.all(...params);
-
+    
   } catch (error) {
     console.error('Error getting previous day messages:', error);
     return [];
@@ -771,7 +795,7 @@ function getPreviousDayMessages(db, guildId, channelId = null) {
 // Get messages from specified source channels for the last X hours
 async function getMessagesFromSourceChannels(db, guild, hours = 24) {
   try {
-    const sourceChannelIds = process.env.DAILY_SUMMARY_SOURCE_CHANNELS
+    const sourceChannelIds = process.env.DAILY_SUMMARY_SOURCE_CHANNELS 
       ? process.env.DAILY_SUMMARY_SOURCE_CHANNELS.split(',').map(id => id.trim())
       : null;
 
@@ -809,7 +833,7 @@ async function getMessagesFromSourceChannels(db, guild, hours = 24) {
 
     // Sort all messages by timestamp to maintain chronological order
     allMessages.sort((a, b) => a.timestamp - b.timestamp);
-
+    
     logger.info(`Retrieved ${allMessages.length} messages from ${validChannelIds.length} source channels for ${guild.name}`);
     return allMessages;
 
@@ -832,9 +856,9 @@ async function getPreviousDaySummary(db, guildId) {
       WHERE guild_id = ? AND channel_id IS NULL AND date = ?
       ORDER BY created_at DESC LIMIT 1
     `);
-
+    
     const result = stmt.get(guildId, yesterdayStr);
-
+    
     if (result) {
       logger.info(`Found previous day summary for guild ${guildId}`);
       return result.summary;
@@ -867,7 +891,7 @@ function saveChatSummary(db, guildId, channelId, summary, messageCount, date, ai
       (id, guild_id, channel_id, date, summary, message_count, created_at, ai_model)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
-
+    
     stmt.run(
       summaryData.id,
       summaryData.guild_id,
@@ -878,7 +902,7 @@ function saveChatSummary(db, guildId, channelId, summary, messageCount, date, ai
       summaryData.created_at,
       summaryData.ai_model
     );
-
+    
     return true;
   } catch (error) {
     console.error('Error saving chat summary:', error);
@@ -892,17 +916,17 @@ function getExistingSummaries(db, guildId, channelId = null, days = 7) {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - days);
     const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
-
+    
     let query = 'SELECT * FROM chat_summaries WHERE guild_id = ? AND date >= ?';
     let params = [guildId, cutoffDateStr];
-
+    
     if (channelId) {
       query += ' AND channel_id = ?';
       params.push(channelId);
     }
-
+    
     query += ' ORDER BY date DESC';
-
+    
     const stmt = db.prepare(query);
     return stmt.all(...params);
   } catch (error) {
@@ -911,505 +935,7 @@ function getExistingSummaries(db, guildId, channelId = null, days = 7) {
   }
 }
 
-/**
- * Advanced message preprocessing to reduce token usage while preserving meaning
- * Removes Discord formatting, condenses whitespace, and optimizes content
- * @param {Array} messages - Messages to preprocess
- * @param {Object} options - Preprocessing options
- * @returns {Array} Preprocessed messages
- */
-function preprocessMessagesAdvanced(messages, options = {}) {
-  const defaults = {
-    removeFormatting: true,
-    removeMentions: false,          // Keep mentions by default for attribution
-    removeEmojis: false,             // Keep emojis by default (can carry meaning)
-    removeCodeBlocks: true,
-    aggressiveWhitespace: true,
-    maxMessageLength: 400,
-    shortenUrls: true,
-    preserveContext: true
-  };
-
-  const opts = { ...defaults, ...options };
-  const processed = [];
-
-  for (const msg of messages) {
-    let content = String(msg.content || '');
-    const originalLength = content.length;
-
-    if (!content.trim()) continue;
-
-    // 1. Remove code blocks first (they often contain formatting)
-    if (opts.removeCodeBlocks) {
-      content = content.replace(/```[\s\S]*?```/g, '[code]');
-      content = content.replace(/`([^`]+)`/g, '$1');
-    }
-
-    // 2. Remove Discord formatting
-    if (opts.removeFormatting) {
-      content = content.replace(/\*\*\*([^*]+)\*\*\*/g, '$1');  // ***bold italic***
-      content = content.replace(/\*\*([^*]+)\*\*/g, '$1');      // **bold**
-      content = content.replace(/\*([^*]+)\*/g, '$1');          // *italic*
-      content = content.replace(/___([^_]+)___/g, '$1');        // ___underline italic___
-      content = content.replace(/__([^_]+)__/g, '$1');          // __underline__
-      content = content.replace(/_([^_]+)_/g, '$1');            // _italic_
-      content = content.replace(/~~([^~]+)~~/g, '$1');          // ~~strikethrough~~
-      content = content.replace(/\|\|([^|]+)\|\|/g, '$1');      // ||spoiler||
-      content = content.replace(/^>\s*/gm, '');                 // > quotes
-    }
-
-    // 3. Handle mentions
-    if (opts.removeMentions) {
-      content = content.replace(/<@!?\d+>/g, '@user');
-      content = content.replace(/<@&\d+>/g, '@role');
-      content = content.replace(/<#\d+>/g, '#channel');
-    }
-
-    // 4. Handle emojis
-    if (opts.removeEmojis) {
-      // Custom Discord emojis
-      content = content.replace(/<a?:\w+:\d+>/g, '');
-      // Unicode emojis (common ranges)
-      content = content.replace(/[\u{1F600}-\u{1F64F}]/gu, '');  // Emoticons
-      content = content.replace(/[\u{1F300}-\u{1F5FF}]/gu, '');  // Symbols & Pictographs
-      content = content.replace(/[\u{1F680}-\u{1F6FF}]/gu, '');  // Transport & Map
-      content = content.replace(/[\u{2600}-\u{26FF}]/gu, '');    // Misc symbols
-      content = content.replace(/[\u{2700}-\u{27BF}]/gu, '');    // Dingbats
-      content = content.replace(/[\u{1F900}-\u{1F9FF}]/gu, '');  // Supplemental Symbols
-      content = content.replace(/[\u{1FA70}-\u{1FAFF}]/gu, '');  // Symbols and Pictographs Extended-A
-    }
-
-    // 5. Shorten URLs
-    if (opts.shortenUrls) {
-      content = content.replace(/https?:\/\/\S{60,}/g, '[link]');
-    }
-
-    // 6. Whitespace handling
-    if (opts.aggressiveWhitespace) {
-      content = content.replace(/\s+/g, ' ');                    // Collapse whitespace
-      content = content.replace(/\s+([,.!?;:])/g, '$1');         // Remove space before punctuation
-      content = content.trim();
-    }
-
-    // 7. Truncate if needed
-    if (opts.maxMessageLength && content.length > opts.maxMessageLength) {
-      // Try to truncate at sentence boundary if preserveContext
-      if (opts.preserveContext) {
-        const truncated = content.substring(0, opts.maxMessageLength);
-        const lastSentence = truncated.lastIndexOf('. ');
-        if (lastSentence > opts.maxMessageLength * 0.7) {
-          content = truncated.substring(0, lastSentence + 1);
-        } else {
-          content = truncated + '…';
-        }
-      } else {
-        content = content.substring(0, opts.maxMessageLength) + '…';
-      }
-    }
-
-    processed.push({
-      username: msg.username,
-      content,
-      timestamp: msg.timestamp,
-      originalLength,
-      processedLength: content.length
-    });
-  }
-
-  return processed;
-}
-
-/**
- * Build optimized transcript for analysis with token budgeting
- * @param {Array} messages - Messages to process
- * @param {number} maxTokenBudget - Maximum tokens to use
- * @returns {Object} Transcript data with metadata
- */
-function buildAnalysisTranscript(messages, maxTokenBudget = 12000) {
-  let usedTokens = 0;
-  const out = [];
-  let usedCount = 0;
-
-  for (const m of messages) {
-    // Skip empty messages
-    if (!m.content || m.content.trim().length === 0) continue;
-
-    // Compact format: username: content
-    const line = `${m.username}: ${m.content}`;
-    const tokenCount = estimateTokensFromText(line) + 1;
-
-    if (maxTokenBudget && usedTokens + tokenCount > maxTokenBudget) break;
-
-    usedTokens += tokenCount;
-    out.push(line);
-    usedCount++;
-  }
-
-  return {
-    transcript: out.join('\n'),
-    usedCount,
-    totalMessages: messages.length,
-    tokenCount: usedTokens,
-    fits: usedCount === messages.length
-  };
-}
-
-/**
- * Extract meaningful keywords from a question for targeted SQL search.
- * Strips stop words and short tokens, returns unique lowercase terms.
- * @param {string} question
- * @returns {string[]}
- */
-function extractKeywords(question) {
-  const stop = new Set([
-    'the', 'and', 'for', 'you', 'are', 'with', 'that', 'this', 'have', 'from',
-    'was', 'but', 'not', 'your', 'just', 'they', 'can', 'all', 'like', 'get',
-    'about', 'what', 'when', 'why', 'who', 'how', 'where', 'then', 'than',
-    'has', 'had', 'did', 'does', 'don', 'got', 'its', 'been', 'were', 'will',
-    'would', 'could', 'should', 'there', 'which', 'their', 'them', 'some',
-    'any', 'most', 'also', 'much', 'many', 'very', 'more', 'other',
-    'it', 'to', 'of', 'in', 'on', 'at', 'as', 'is', 'be', 'or', 'an', 'a',
-    'do', 'if', 'so', 'no', 'he', 'she', 'his', 'her', 'my', 'me', 'we',
-    'discussed', 'talked', 'said', 'mentioned', 'happened', 'going',
-    'tell', 'know', 'think', 'chat', 'channel', 'server', 'yesterday',
-    'today', 'last', 'recent', 'anything', 'something', 'anyone', 'someone'
-  ]);
-  return [...new Set(
-    question.toLowerCase()
-      .replace(/[^a-z0-9_\s]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !stop.has(w))
-  )];
-}
-
-/**
- * Query chat_summaries for a given time range.
- * @param {Object} db - Database instance
- * @param {string} guildId
- * @param {string|null} channelId
- * @param {number} hours - How many hours back to look
- * @returns {Array} Matching summaries
- */
-function getSummariesForTimeRange(db, guildId, channelId = null, hours = 24) {
-  try {
-    const cutoffDate = new Date(Date.now() - hours * 60 * 60 * 1000);
-    const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
-
-    let query = 'SELECT * FROM chat_summaries WHERE guild_id = ? AND date >= ?';
-    let params = [guildId, cutoffDateStr];
-
-    if (channelId) {
-      query += ' AND channel_id = ?';
-      params.push(channelId);
-    }
-
-    query += ' ORDER BY date DESC';
-    const stmt = db.prepare(query);
-    return stmt.all(...params);
-  } catch (error) {
-    logger.error('Error fetching summaries for time range:', error);
-    return [];
-  }
-}
-
-/**
- * Calculate message coverage for a time range.
- * Returns the fraction of hourly buckets that contain at least one stored message.
- * @param {Object} db - Database instance
- * @param {string} guildId
- * @param {string|null} channelId
- * @param {number} hours
- * @returns {{ coveragePct: number, totalMessages: number, oldestTimestamp: number|null, newestTimestamp: number|null }}
- */
-function getMessageCoverage(db, guildId, channelId = null, hours = 24) {
-  try {
-    const now = Date.now();
-    const cutoff = now - hours * 60 * 60 * 1000;
-
-    let query = 'SELECT timestamp FROM chat_messages WHERE guild_id = ? AND timestamp > ?';
-    let params = [guildId, cutoff];
-    if (channelId) {
-      query += ' AND channel_id = ?';
-      params.push(channelId);
-    }
-    query += ' ORDER BY timestamp ASC';
-
-    const rows = db.prepare(query).all(...params);
-    if (!rows || rows.length === 0) {
-      return { coveragePct: 0, totalMessages: 0, oldestTimestamp: null, newestTimestamp: null };
-    }
-
-    // Count how many of the hourly buckets have at least one message
-    const bucketSet = new Set();
-    for (const r of rows) {
-      bucketSet.add(Math.floor((r.timestamp - cutoff) / (60 * 60 * 1000)));
-    }
-    const coveragePct = Math.round((bucketSet.size / Math.max(hours, 1)) * 100);
-
-    return {
-      coveragePct: Math.min(coveragePct, 100),
-      totalMessages: rows.length,
-      oldestTimestamp: rows[0].timestamp,
-      newestTimestamp: rows[rows.length - 1].timestamp
-    };
-  } catch (error) {
-    logger.error('Error calculating message coverage:', error);
-    return { coveragePct: 0, totalMessages: 0, oldestTimestamp: null, newestTimestamp: null };
-  }
-}
-
-/**
- * Fetch raw messages matching specific keywords via SQL LIKE.
- * @param {Object} db - Database instance
- * @param {string} guildId
- * @param {string|null} channelId
- * @param {number} hours
- * @param {string[]} keywords
- * @param {number} limit
- * @returns {Array}
- */
-function getKeywordMatchedMessages(db, guildId, channelId = null, hours = 24, keywords = [], limit = 200) {
-  try {
-    if (!keywords || keywords.length === 0) return [];
-    const cutoff = Date.now() - hours * 60 * 60 * 1000;
-
-    // Build OR clause for each keyword
-    const likeClauses = keywords.map(() => 'content LIKE ?').join(' OR ');
-    let query = `SELECT * FROM chat_messages WHERE guild_id = ? AND timestamp > ? AND (${likeClauses})`;
-    let params = [guildId, cutoff, ...keywords.map(k => `%${k}%`)];
-
-    if (channelId) {
-      query += ' AND channel_id = ?';
-      params.push(channelId);
-    }
-    query += ' ORDER BY timestamp ASC LIMIT ?';
-    params.push(limit);
-
-    return db.prepare(query).all(...params);
-  } catch (error) {
-    logger.error('Error fetching keyword-matched messages:', error);
-    return [];
-  }
-}
-
-/**
- * Answer a specific question using chat message context.
- * Uses a tiered strategy:
- *   1. If stored summaries cover the time range, use them as primary context
- *   2. Extract keywords from the question and fetch only matching raw messages
- *   3. Fall back to full raw message transcript when needed
- * @param {string} question - The user's question
- * @param {Array} messages - Chat messages (full set from caller)
- * @param {Object} context - { scope, timeRange, channelName, guildName, db, guildId, channelId, hours }
- * @returns {Promise<Object>} Answer with confidence, supporting details, and coverage info
- */
-async function answerQuestionWithContext(question, messages, context = {}) {
-  try {
-    if (!messages || messages.length === 0) {
-      return {
-        answer: 'No messages available to analyze for this question.',
-        confidence: 'Low',
-        supportingDetails: ['No chat history found in the specified time period'],
-        messageCount: 0,
-        participantCount: 0,
-        modelUsed: 'none',
-        tokensUsed: 0,
-        coveragePct: 0,
-        strategy: 'none'
-      };
-    }
-
-    const { db: ctxDb, guildId, channelId, hours } = context;
-    const effectiveHours = hours || 24;
-
-    // === Coverage indicator ===
-    let coveragePct = 100; // assume full if no db context
-    if (ctxDb && guildId) {
-      const coverage = getMessageCoverage(ctxDb, guildId, channelId, effectiveHours);
-      coveragePct = coverage.coveragePct;
-    }
-
-    // === Tier 1: Check for existing summaries ===
-    let summaryContext = '';
-    let strategy = 'raw'; // tracks which path we took
-    if (ctxDb && guildId) {
-      const summaries = getSummariesForTimeRange(ctxDb, guildId, channelId, effectiveHours);
-      if (summaries && summaries.length > 0) {
-        summaryContext = summaries
-          .map(s => `[${s.date}] (${s.message_count} msgs): ${s.summary}`)
-          .join('\n\n');
-        logger.info(`[ASK] Found ${summaries.length} existing summary/summaries covering the time range`);
-      }
-    }
-
-    // === Tier 2: Keyword-targeted raw messages ===
-    const keywords = extractKeywords(question);
-    let keywordMessages = [];
-    if (keywords.length > 0 && ctxDb && guildId) {
-      keywordMessages = getKeywordMatchedMessages(ctxDb, guildId, channelId, effectiveHours, keywords, 200);
-      logger.info(`[ASK] Keyword search for [${keywords.join(', ')}] returned ${keywordMessages.length} messages`);
-    }
-
-    // === Decide strategy ===
-    let contextBlock = '';
-    let usedCount = 0;
-    let tokenCount = 0;
-    const tokenBudget = ASK_TOKEN_BUDGET - 1200; // reserve for prompt chrome
-
-    if (summaryContext && keywordMessages.length > 0) {
-      // Best case: summaries for overview + keyword hits for specifics
-      strategy = 'hybrid';
-      const summaryTokens = estimateTokensFromText(summaryContext);
-      const rawBudget = Math.max(1000, tokenBudget - summaryTokens - 100);
-
-      const preprocessed = preprocessMessagesAdvanced(keywordMessages, {
-        removeFormatting: true, removeMentions: false, removeEmojis: true,
-        removeCodeBlocks: true, aggressiveWhitespace: true,
-        maxMessageLength: 300, shortenUrls: true, preserveContext: true
-      });
-      const { transcript, usedCount: rawUsed, tokenCount: rawTokens } = buildTranscript(preprocessed, rawBudget);
-
-      contextBlock = `EXISTING SUMMARIES (pre-generated overviews):\n${summaryContext}\n\nRELEVANT RAW MESSAGES (keyword-matched for "${keywords.join('", "')}"):\n${transcript}`;
-      usedCount = rawUsed;
-      tokenCount = summaryTokens + rawTokens;
-    } else if (summaryContext && keywordMessages.length === 0 && keywords.length > 0) {
-      // Summaries exist but no keyword hits — question may be answerable from summaries alone
-      strategy = 'summary-only';
-      contextBlock = `EXISTING SUMMARIES:\n${summaryContext}`;
-      usedCount = 0;
-      tokenCount = estimateTokensFromText(summaryContext);
-    } else {
-      // No summaries available or no db context — full raw transcript (original behavior)
-      strategy = 'raw';
-      const preprocessed = preprocessMessagesAdvanced(messages, {
-        removeFormatting: true, removeMentions: false, removeEmojis: true,
-        removeCodeBlocks: true, aggressiveWhitespace: true,
-        maxMessageLength: 300, shortenUrls: true, preserveContext: true
-      });
-      const result = buildTranscript(preprocessed, tokenBudget);
-      contextBlock = `RAW MESSAGES:\n${result.transcript}`;
-      usedCount = result.usedCount;
-      tokenCount = result.tokenCount;
-    }
-
-    // Get participant info from the full message set
-    const participants = new Set(messages.map(m => m.username).filter(Boolean));
-
-    // Build prompt
-    const prompt = `You are analyzing Discord chat context to answer a specific question.
-
-QUESTION: ${question}
-
-CONTEXT FROM ${context.scope || 'channel'} (${context.timeRange || 'recent messages'}):
-${contextBlock}
-
-METADATA:
-- Time period: ${context.timeRange || 'Not specified'}
-- Messages in database: ${messages.length} | Used in context: ${usedCount || 'summaries used'}
-- Participants: ${Array.from(participants).join(', ')}
-- Location: ${context.channelName || context.guildName || 'Unknown'}
-- Data coverage: ${coveragePct}% of requested time range has stored messages
-- Context strategy: ${strategy}
-
-INSTRUCTIONS:
-1. Answer the question directly and concisely based ONLY on the context above
-2. Quote specific users when their statements are relevant (use exact usernames)
-3. If the context doesn't contain enough information to answer confidently, say so explicitly
-4. Provide timestamps or context when it adds clarity
-5. Keep your response focused and under 500 words
-6. Be factual - don't speculate beyond what's in the context
-7. If using summary context, note that summaries may omit fine-grained details
-
-Return your answer in this JSON format:
-{
-  "answer": "Your direct answer to the question...",
-  "supportingDetails": [
-    "Relevant detail with attribution (e.g., 'user123 mentioned...')",
-    "Additional context or timestamp"
-  ],
-  "confidence": "High | Medium | Low"
-}
-
-Confidence levels:
-- High: Question directly addressed in the context
-- Medium: Some relevant information but not comprehensive
-- Low: Little to no relevant information in the context
-
-Return ONLY valid JSON.`;
-
-    const apiMessages = [
-      { role: 'user', content: prompt }
-    ];
-
-    logger.info(`[ASK] Strategy: ${strategy} | ${usedCount} raw msgs, ${tokenCount} tokens for: "${question.substring(0, 50)}..."`);
-
-    const response = await callLLMAPI(apiMessages, ASK_MAX_RESPONSE_TOKENS, ASK_MODEL, true);
-
-    // Parse JSON response
-    let parsed;
-    try {
-      parsed = JSON.parse(response);
-    } catch (parseError) {
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          parsed = JSON.parse(jsonMatch[0]);
-        } catch (secondError) {
-          logger.error('[ASK] Failed to parse JSON response:', secondError);
-          return {
-            answer: response || 'Failed to get a valid response from AI.',
-            confidence: 'Low',
-            supportingDetails: ['Unable to parse structured response'],
-            messageCount: usedCount,
-            participantCount: participants.size,
-            modelUsed: ASK_MODEL,
-            tokensUsed: tokenCount,
-            coveragePct,
-            strategy
-          };
-        }
-      } else {
-        return {
-          answer: response || 'Failed to get a response from AI.',
-          confidence: 'Low',
-          supportingDetails: ['Response was not in expected format'],
-          messageCount: usedCount,
-          participantCount: participants.size,
-          modelUsed: ASK_MODEL,
-          tokensUsed: tokenCount,
-          coveragePct,
-          strategy
-        };
-      }
-    }
-
-    return {
-      answer: parsed.answer || response,
-      confidence: parsed.confidence || 'Medium',
-      supportingDetails: Array.isArray(parsed.supportingDetails) ? parsed.supportingDetails : [],
-      messageCount: usedCount || messages.length,
-      participantCount: participants.size,
-      modelUsed: ASK_MODEL,
-      tokensUsed: tokenCount,
-      coveragePct,
-      strategy
-    };
-
-  } catch (error) {
-    logger.error('Error in answerQuestionWithContext:', error);
-    return {
-      answer: 'An error occurred while processing your question. Please try again.',
-      confidence: 'Low',
-      supportingDetails: [error.message],
-      messageCount: 0,
-      participantCount: 0,
-      modelUsed: 'error',
-      tokensUsed: 0,
-      coveragePct: 0,
-      strategy: 'error'
-    };
-  }
-}
+// ... (new functions added below)
 
 /**
  * Get channel messages for analysis - tries database first, then fetches from Discord
@@ -1423,7 +949,7 @@ async function getChannelMessages(guildId, channelId, startTime, discordChannel 
   try {
     const db = require('./db');
     let messages;
-
+    
     if (channelId) {
       // Get messages from specific channel
       messages = db.prepare(`
@@ -1439,9 +965,9 @@ async function getChannelMessages(guildId, channelId, startTime, discordChannel 
         ORDER BY timestamp ASC
       `).all(guildId, startTime);
     }
-
+    
     console.log(`[AI] Database query returned ${messages ? messages.length : 'null'} messages`);
-
+    
     // If no messages in database and we have a Discord channel, fetch from Discord
     if ((!messages || messages.length === 0) && discordChannel && channelId) {
       console.log(`[AI] No stored messages found, attempting Discord fallback for channel ${channelId} (${discordChannel.name})`);
@@ -1457,7 +983,7 @@ async function getChannelMessages(guildId, channelId, startTime, discordChannel 
     } else if (messages && messages.length > 0) {
       console.log(`[AI] Using ${messages.length} messages from database`);
     }
-
+    
     return messages || [];
   } catch (error) {
     logger.error('Error fetching channel messages:', error);
@@ -1476,51 +1002,51 @@ async function fetchMessagesFromDiscord(channel, startTime, db) {
   try {
     const messages = [];
     const startDate = new Date(startTime);
-
+    
     console.log(`[DISCORD-FETCH] Fetching messages from Discord channel ${channel.name} (${channel.id}) since ${startDate.toISOString()}`);
-
+    
     // Check if bot has permission to read message history
     const permissions = channel.permissionsFor(channel.guild.members.me);
     console.log(`[DISCORD-FETCH] Checking permissions for channel ${channel.name}`);
-
+    
     if (!permissions) {
       throw new Error(`Cannot get permissions for channel #${channel.name}`);
     }
-
+    
     if (!permissions.has('ReadMessageHistory')) {
       throw new Error(`Bot missing 'Read Message History' permission in #${channel.name}`);
     }
-
+    
     console.log(`[DISCORD-FETCH] Bot has required permissions in #${channel.name}, fetching messages...`);
-
+    
     // Fetch messages in batches
     let lastId = null;
     let fetchedCount = 0;
     const maxMessages = 500; // Reasonable limit
-
+    
     while (fetchedCount < maxMessages) {
       const fetchOptions = {
         limit: 100,
       };
-
+      
       if (lastId) {
         fetchOptions.before = lastId;
       }
-
+      
       const batch = await channel.messages.fetch(fetchOptions);
       if (batch.size === 0) break;
-
+      
       let foundOldMessage = false;
-
+      
       for (const [, message] of batch) {
         if (message.createdTimestamp < startTime) {
           foundOldMessage = true;
           break;
         }
-
+        
         // Store message in database for future use
         storeChatMessage(db, message);
-
+        
         // Add to our results
         messages.push({
           id: `${message.guild.id}_${message.channel.id}_${message.id}`,
@@ -1532,20 +1058,20 @@ async function fetchMessagesFromDiscord(channel, startTime, db) {
           timestamp: message.createdTimestamp,
           created_at: Date.now()
         });
-
+        
         fetchedCount++;
         lastId = message.id;
       }
-
+      
       if (foundOldMessage || batch.size < 100) break;
     }
-
+    
     // Sort by timestamp ascending
     messages.sort((a, b) => a.timestamp - b.timestamp);
-
+    
     logger.info(`Fetched ${messages.length} messages from Discord channel ${channel.name}`);
     return messages;
-
+    
   } catch (error) {
     logger.error('Error fetching messages from Discord:', error);
     return [];
@@ -1566,51 +1092,33 @@ async function analyzeChannelMessages(messages, context = {}) {
 
     // Build optimized transcript for analysis
     console.log(`[AI] Processing ${messages.length} messages for analysis`);
-
+    
     // Filter out bot messages and system messages for cleaner analysis
-    const humanMessages = messages.filter(m =>
-      m.content &&
-      m.content.trim().length > 0 &&
+    const humanMessages = messages.filter(m => 
+      m.content && 
+      m.content.trim().length > 0 && 
       !m.username.includes('bot') &&
       !m.content.startsWith('!') &&
       !m.content.startsWith('/')
     );
-
+    
     console.log(`[AI] Filtered to ${humanMessages.length} relevant messages`);
-
-
+    
     // Use optimized transcript builder with higher token budget
     const maxTokens = 12000; // More tokens for better analysis
-
-    // Handle aggressive preprocessing
-    let messagesToTranscribe = humanMessages;
-    if (context.aggressivePreprocessing) {
-      console.log('[AI] Applying aggressive preprocessing to fit more messages');
-      messagesToTranscribe = preprocessMessagesAdvanced(humanMessages, {
-        removeFormatting: true,
-        removeCodeBlocks: true,
-        aggressiveWhitespace: true,
-        removeEmojis: true
-      });
-    }
-
-    const { transcript, usedCount, tokenCount, totalMessages } = buildAnalysisTranscript(messagesToTranscribe, maxTokens);
-
+    const { transcript, usedCount, tokenCount, totalMessages } = buildAnalysisTranscript(humanMessages, maxTokens);
+    
     console.log(`[AI] Compiled transcript: ${usedCount}/${totalMessages} messages, ${tokenCount} tokens`);
-
+    
     if (!transcript || transcript.trim().length === 0) {
       console.log('[AI] No valid transcript generated, falling back');
       return generateFallbackAnalysis(messages, context);
     }
-
+    
     // Create focused developer-focused prompt
-    let analysisPrompt = `Analyze this Discord chat transcript. Extract ONLY what was actually discussed. Be specific and quote real users.`;
+    const analysisPrompt = `Analyze this Discord chat transcript. Extract ONLY what was actually discussed. Be specific and quote real users.
 
-    if (context.focus) {
-      analysisPrompt += `\n\nSPECIAL FOCUS: Pay special attention to discussions related to "${context.focus}". Ensure these are highlighted in the analysis.`;
-    }
-
-    analysisPrompt += `\n\nChat Transcript:
+Chat Transcript:
 ${transcript}
 
 Return analysis in this JSON format:
@@ -1654,21 +1162,21 @@ Return ONLY valid JSON.`;
 
     // Call LLM for analysis using dedicated analysis model
     const analysisModel = process.env.ANALYSIS_MODEL || process.env.SUMMARIZATION_MODEL || process.env.MODEL_NAME;
-
+    
     const analysisMessages = [
       {
         role: 'user',
         content: analysisPrompt
       }
     ];
-
+    
     console.log(`[AI] Calling LLM API for analysis with model: ${analysisModel}`);
     console.log(`[AI] Transcript: ${transcript.length} chars, ${tokenCount} tokens`);
-
+    
     const response = await callLLMAPI(analysisMessages, 6000, analysisModel, true);
-
+    
     console.log(`[AI] Raw response:`, response ? (typeof response === 'string' ? response.substring(0, 200) + '...' : JSON.stringify(response).substring(0, 200) + '...') : 'null');
-
+    
     if (!response || response.error) {
       console.error('[AI] Analysis failed:', response?.error || 'No response received');
       return generateFallbackAnalysis(messages, context);
@@ -1681,7 +1189,7 @@ Return ONLY valid JSON.`;
     } catch (parseError) {
       console.error('[AI] Failed to parse AI response as JSON:', parseError.message);
       console.error('[AI] Raw response that failed to parse:', response);
-
+      
       // Try to extract JSON from the response
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -1700,7 +1208,7 @@ Return ONLY valid JSON.`;
 
     // Validate and enhance the analysis
     analysis = validateAndEnhanceAnalysis(analysis, messages, context);
-
+    
     return analysis;
   } catch (error) {
     logger.error('Error in analyzeChannelMessages:', error);
@@ -1719,13 +1227,13 @@ function generateFallbackAnalysis(messages, context) {
   const userMessages = {};
   const topics = new Set();
   const mentions = new Set();
-
+  
   messages.forEach(msg => {
     if (!userMessages[msg.username]) {
       userMessages[msg.username] = 0;
     }
     userMessages[msg.username]++;
-
+    
     // Extract potential topics (words longer than 4 chars)
     const words = msg.content.toLowerCase().split(/\s+/);
     words.forEach(word => {
@@ -1733,14 +1241,14 @@ function generateFallbackAnalysis(messages, context) {
         topics.add(word);
       }
     });
-
+    
     // Extract mentions
     const mentionMatches = msg.content.match(/@\w+/g);
     if (mentionMatches) {
       mentionMatches.forEach(mention => mentions.add(mention));
     }
   });
-
+  
   // Get top contributors
   const topContributors = Object.entries(userMessages)
     .sort((a, b) => b[1] - a[1])
@@ -1749,7 +1257,7 @@ function generateFallbackAnalysis(messages, context) {
       acc[user] = `${count} messages`;
       return acc;
     }, {});
-
+  
   return {
     summary: `Analysis of ${messages.length} messages from ${context.scope || 'the channel'} over the last ${context.days || 7} days. This is a fallback analysis - AI service is currently unavailable.`,
     keyTopics: Array.from(topics).slice(0, 5),
@@ -1784,7 +1292,7 @@ function generateFallbackAnalysis(messages, context) {
  */
 function validateAndEnhanceAnalysis(analysis, messages, context) {
   console.log('[AI] Validating analysis structure:', Object.keys(analysis));
-
+  
   // Preserve the new analysis format - just ensure required fields exist
   const validatedAnalysis = {
     actuallyDiscussed: analysis.actuallyDiscussed || 'No clear discussion summary available.',
@@ -1794,89 +1302,30 @@ function validateAndEnhanceAnalysis(analysis, messages, context) {
     technicalMentions: Array.isArray(analysis.technicalMentions) ? analysis.technicalMentions : [],
     nextStepsFromChat: Array.isArray(analysis.nextStepsFromChat) ? analysis.nextStepsFromChat : []
   };
-
+  
   console.log('[AI] Validated analysis keys:', Object.keys(validatedAnalysis));
   console.log('[AI] actuallyDiscussed:', validatedAnalysis.actuallyDiscussed.substring(0, 100) + '...');
-
+  
   return validatedAnalysis;
-}
-
-// Generate a concise changelog summary for a version
-async function generateChangelogSummary(version, taskList, manualEntries, contributorIds, durationDays, threadDiscussions = []) {
-  let discussionContext = '';
-  if (threadDiscussions && threadDiscussions.length > 0) {
-    discussionContext = '\n\n**Thread Discussions & Context:**\n';
-    threadDiscussions.forEach((thread, i) => {
-      discussionContext += `\n### Task: ${thread.task}\n${thread.discussion.substring(0, 1500)}\n`;
-    });
-    discussionContext += '\nUse the above thread discussions to provide deeper insights into implementation details, challenges overcome, and technical decisions made.\n';
-  }
-
-  const prompt = `Generate a concise changelog summary for version ${version}.
-
-**Completed Tasks:**
-${taskList.length > 0 ? taskList.map((t, i) => `${i + 1}. ${t}`).join('\n') : 'None'}
-
-**Manual Entries:**
-${manualEntries.length > 0 ? manualEntries.map((e, i) => `${i + 1}. ${e}`).join('\n') : 'None'}
-
-**Development Duration:** ${durationDays} days
-**Contributors:** ${contributorIds.length} team members
-${discussionContext}
-
-Please provide a professional changelog summary with:
-1. Brief overview (2-3 sentences) - what was the focus of this version?
-2. Key accomplishments (bullet points, max 5 most important items)
-3. Notable highlights or improvements
-4. Technical insights (if thread discussions reveal important implementation details)
-5. One-line version description
-
-Keep it clear, professional, and under 600 words. Focus on what matters to developers and administrators.`;
-
-  const messages = [
-    { role: 'system', content: 'You are a technical writer creating concise changelog summaries for software versions. Analyze thread discussions to extract valuable technical insights and implementation details.' },
-    { role: 'user', content: prompt }
-  ];
-
-  try {
-    const summary = await callLLMAPI(messages, 1000, SUMMARIZATION_MODEL);
-    return summary;
-  } catch (error) {
-    logger.error('Error generating changelog summary:', error);
-    // Return a basic summary as fallback
-    return `## Version ${version}\n\n**Duration:** ${durationDays} days\n**Contributors:** ${contributorIds.length}\n**Tasks:** ${taskList.length} completed\n**Entries:** ${manualEntries.length} manual\n\nThis version includes ${taskList.length} completed tasks and ${manualEntries.length} manual entries.`;
-  }
 }
 
 // Export all functions
 module.exports = {
-  callLLMAPI,
-  getPrereqs,
-  enhanceAnnouncement,
-  getSuggestions,
-  generateTaskStages,
-  enhanceTaskNote,
-  enhanceTaskDescription,
-  generateFollowUpTasks,
-  checkAIStatus,
-  storeChatMessage,
-  generateOfflineSummary,
-  generateChatSummary,
-  getRecentMessages,
-  getPreviousDayMessages,
-  getMessagesFromSourceChannels,
-  getPreviousDaySummary,
-  saveChatSummary,
-  getExistingSummaries,
-  getChannelMessages,
-  fetchMessagesFromDiscord,
-  analyzeChannelMessages,
-  buildAnalysisTranscript,
-  preprocessMessagesAdvanced,
-  answerQuestionWithContext,
-  extractKeywords,
-  getSummariesForTimeRange,
-  getMessageCoverage,
-  getKeywordMatchedMessages,
-  generateChangelogSummary
+    callLLMAPI,
+    getPrereqs,
+    enhanceAnnouncement,
+    getSuggestions,
+    generateTaskStages,
+    enhanceTaskNote,
+    enhanceTaskDescription,
+    generateFollowUpTasks,
+    checkAIStatus,
+    storeChatMessage,
+    generateOfflineSummary,
+    generateChatSummary,
+    getRecentMessages,
+    getPreviousDayMessages,
+    getChannelMessages,
+    fetchMessagesFromDiscord,
+    analyzeChannelMessages
 };

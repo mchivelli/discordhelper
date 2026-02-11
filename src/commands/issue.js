@@ -2,6 +2,7 @@ const { SlashCommandBuilder, ChannelType, PermissionsBitField } = require('disco
 const db = require('../utils/db');
 const logger = require('../utils/logger');
 const { issueActionRow, buildIssueEmbed, createIssueDetailsModal } = require('../components/issue-components');
+const { ISSUE_STATUS, ISSUE_SEVERITY, PREFIXES } = require('../utils/constants');
 
 const DEFAULT_ISSUE_CHANNEL_ID = process.env.ISSUE_TRACKER_CHANNEL_ID || '1410922842341507143';
 
@@ -16,10 +17,10 @@ module.exports = {
         .addStringOption(o => o.setName('description').setDescription('Describe the issue').setRequired(true))
         .addStringOption(o => o.setName('severity').setDescription('Severity').setRequired(false)
           .addChoices(
-            { name: 'Low', value: 'low' },
-            { name: 'Normal', value: 'normal' },
-            { name: 'High', value: 'high' },
-            { name: 'Critical', value: 'critical' }
+            { name: 'Low', value: ISSUE_SEVERITY.LOW },
+            { name: 'Normal', value: ISSUE_SEVERITY.NORMAL },
+            { name: 'High', value: ISSUE_SEVERITY.HIGH },
+            { name: 'Critical', value: ISSUE_SEVERITY.CRITICAL }
           ))
         .addChannelOption(o => o.setName('channel').setDescription('Override target channel').setRequired(false)))
     .addSubcommand(sub =>
@@ -47,7 +48,7 @@ module.exports = {
         await interaction.deferReply();
         const title = interaction.options.getString('title');
         const description = interaction.options.getString('description');
-        const severity = interaction.options.getString('severity') || 'normal';
+        const severity = interaction.options.getString('severity') || ISSUE_SEVERITY.NORMAL;
         const override = interaction.options.getChannel('channel');
 
         const setting = db.prepare('SELECT value FROM bot_settings WHERE key = ?').get('issue_channel_id');
@@ -66,7 +67,7 @@ module.exports = {
           id: issueId,
           title,
           description,
-          status: 'open',
+          status: ISSUE_STATUS.OPEN,
           severity,
           reporter_id: interaction.user.id,
           assignee_id: null,
@@ -82,15 +83,17 @@ module.exports = {
         db.prepare('INSERT INTO issues (id, title, description, status, severity, reporter_id, assignee_id, guild_id, channel_id, thread_id, message_id, details, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
           .run(issue.id, issue.title, issue.description, issue.status, issue.severity, issue.reporter_id, issue.assignee_id, issue.guild_id, issue.channel_id, issue.thread_id, issue.message_id, issue.details, issue.created_at, issue.updated_at);
 
-        // Post the embed to channel
-        const embed = buildIssueEmbed(issue, interaction.user);
-        const components = [issueActionRow(issue.id, issue.status, null)];
-        const message = await channel.send({ embeds: [embed], components });
+        // Create compact message in main channel
+        const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
+        const compactMessage = `${PREFIXES.ISSUE.OPEN} **${title}** • ${severityLabel} • \`${issueId}\``;
+        const message = await channel.send(compactMessage);
 
-        // Create a thread for discussion
+        // Create thread with status prefix
         let thread;
         try {
-          thread = await message.startThread({ name: `Issue: ${title.substring(0, 80)}` });
+          const prefixLen = PREFIXES.ISSUE.OPEN.length + 1;
+          const titleLimit = 100 - prefixLen;
+          thread = await message.startThread({ name: `${PREFIXES.ISSUE.OPEN} ${title.substring(0, titleLimit)}` });
         } catch (e) {
           logger.warn('Could not create thread for issue:', e.message);
         }
@@ -103,20 +106,21 @@ module.exports = {
         db.prepare('UPDATE issues SET thread_id = ?, message_id = ?, updated_at = ? WHERE id = ?')
           .run(issue.thread_id, issue.message_id, issue.updated_at, issue.id);
 
-        // Reply to user
-        // Rebuild components with message id embedded
-        const refreshedComponents = [issueActionRow(issue.id, issue.status, message.id)];
-        await message.edit({ embeds: [embed], components: refreshedComponents });
-        return interaction.editReply({ content: `Issue created in <#${channel.id}>${threadId ? ` with thread <#${threadId}>` : ''}.`, embeds: [embed] });
+        // Post details inside thread
+        if (thread) {
+          const detailsEmbed = buildIssueEmbed(issue, interaction.user);
+          const components = [issueActionRow(issue.id, issue.status, message.id)];
+          await thread.send({ embeds: [detailsEmbed], components });
+        }
+
+        return interaction.editReply({ content: `Issue created in <#${channel.id}>${threadId ? ` with thread <#${threadId}>` : ''}.` });
       }
     } catch (error) {
       logger.error('Error in issue command:', error);
       if (interaction.deferred) {
-        return interaction.editReply({ content: `❌ Error: ${error.message}` });
+        return interaction.editReply({ content: `Error: ${error.message}` });
       }
-      return interaction.reply({ content: `❌ Error: ${error.message}`, ephemeral: true });
+      return interaction.reply({ content: `Error: ${error.message}`, ephemeral: true });
     }
   }
 };
-
-

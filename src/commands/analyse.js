@@ -21,6 +21,15 @@ module.exports = {
                         .setMinValue(1)
                         .setMaxValue(30)
                         .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('focus')
+                        .setDescription('Specific aspect to focus on (e.g., "bugs", "decisions")')
+                        .setRequired(false)
+                        .setMaxLength(200))
+                .addBooleanOption(option =>
+                    option.setName('aggressive_preprocessing')
+                        .setDescription('Fit more messages via aggressive preprocessing')
+                        .setRequired(false))
                 .addBooleanOption(option =>
                     option.setName('detailed')
                         .setDescription('Include detailed technical analysis and code snippets')
@@ -34,6 +43,15 @@ module.exports = {
                         .setDescription('Number of days of history to analyze (default: 7, max: 30)')
                         .setMinValue(1)
                         .setMaxValue(30)
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('focus')
+                        .setDescription('Specific aspect to focus on (e.g., "bugs", "decisions")')
+                        .setRequired(false)
+                        .setMaxLength(200))
+                .addBooleanOption(option =>
+                    option.setName('aggressive_preprocessing')
+                        .setDescription('Fit more messages via aggressive preprocessing')
                         .setRequired(false))
                 .addBooleanOption(option =>
                     option.setName('detailed')
@@ -49,6 +67,15 @@ module.exports = {
                         .setMinValue(1)
                         .setMaxValue(14)
                         .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('focus')
+                        .setDescription('Specific aspect to focus on (e.g., "bugs", "decisions")')
+                        .setRequired(false)
+                        .setMaxLength(200))
+                .addBooleanOption(option =>
+                    option.setName('aggressive_preprocessing')
+                        .setDescription('Fit more messages via aggressive preprocessing')
+                        .setRequired(false))
                 .addBooleanOption(option =>
                     option.setName('detailed')
                         .setDescription('Include detailed technical analysis and code snippets')
@@ -58,6 +85,8 @@ module.exports = {
         const subcommand = interaction.options.getSubcommand();
         const days = interaction.options.getInteger('days');
         const detailed = interaction.options.getBoolean('detailed') || false;
+        const focus = interaction.options.getString('focus');
+        const aggressivePreprocessing = interaction.options.getBoolean('aggressive_preprocessing') || false;
 
         // Admin-only check (redundant with setDefaultMemberPermissions, but explicit)
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
@@ -72,7 +101,7 @@ module.exports = {
 
         try {
             let channelId, guildId, analysisScope, defaultDays;
-            
+
             switch (subcommand) {
                 case 'channel':
                     const targetChannel = interaction.options.getChannel('channel');
@@ -84,14 +113,14 @@ module.exports = {
                     analysisScope = `#${targetChannel.name}`;
                     defaultDays = 7;
                     break;
-                
+
                 case 'current':
                     channelId = interaction.channelId;
                     guildId = interaction.guildId;
                     analysisScope = `#${interaction.channel.name}`;
                     defaultDays = 7;
                     break;
-                
+
                 case 'server':
                     channelId = null; // Analyze all channels
                     guildId = interaction.guildId;
@@ -108,37 +137,16 @@ module.exports = {
                 content: `🔍 Analyzing ${analysisScope} (last ${daysToAnalyze} days)...\nThis may take a moment.`
             });
 
-            // Get messages from database with Discord fallback
-            console.log(`[ANALYSE] Starting message retrieval for ${analysisScope}`);
-            console.log(`[ANALYSE] Channel ID: ${channelId}, Guild ID: ${guildId}`);
-            console.log(`[ANALYSE] Time range: ${new Date(startTime).toISOString()} to now`);
-            
-            const discordChannel = channelId ? interaction.guild.channels.cache.get(channelId) : null;
-            console.log(`[ANALYSE] Discord channel lookup: ${channelId} -> ${discordChannel ? discordChannel.name : 'null'}`);
-            
-            const messages = await getChannelMessages(guildId, channelId, startTime, discordChannel);
-
-            console.log(`[ANALYSE] Retrieved ${messages.length} messages for analysis from ${analysisScope}`);
+            // Get messages from database
+            const messages = await getChannelMessages(guildId, channelId, startTime);
 
             if (!messages || messages.length === 0) {
-                let errorMessage = `❌ No messages found in ${analysisScope} for the last ${daysToAnalyze} days.\n\n`;
-                
-                if (!discordChannel) {
-                    errorMessage += `🚫 **Issue:** Cannot access channel object for Discord fallback.\n`;
-                } else {
-                    errorMessage += `🔍 **Checked:** Database and Discord API fallback.\n`;
-                }
-                
-                errorMessage += `💡 **Try:**\n`;
-                errorMessage += `• Use a shorter time period (1-2 days)\n`;
-                errorMessage += `• Ensure bot has "Read Message History" permission\n`;
-                errorMessage += `• Check bot logs for detailed error messages\n`;
-                errorMessage += `• Verify there are actually messages in this channel`;
-                
-                return interaction.editReply({ content: errorMessage });
+                return interaction.editReply({
+                    content: `❌ No messages found in ${analysisScope} for the last ${daysToAnalyze} days.`
+                });
             }
 
-            logger.info(`Analyzing ${messages.length} messages from ${analysisScope} (${new Date(startTime).toISOString()} to now)`);
+            logger.info(`Analyzing ${messages.length} messages from ${analysisScope}`);
 
             // Perform AI analysis
             const analysis = await analyzeChannelMessages(messages, {
@@ -146,7 +154,9 @@ module.exports = {
                 detailed: detailed,
                 days: daysToAnalyze,
                 guildName: interaction.guild.name,
-                channelName: channelId ? interaction.guild.channels.cache.get(channelId)?.name : 'Multiple Channels'
+                channelName: channelId ? interaction.guild.channels.cache.get(channelId)?.name : 'Multiple Channels',
+                focus,
+                aggressivePreprocessing
             });
 
             if (!analysis || analysis.error) {
@@ -155,89 +165,143 @@ module.exports = {
                 });
             }
 
-            // Create simple, focused embeds
+            // Create embeds for the analysis
             const embeds = [];
 
-            // Main summary embed
+            // Main analysis embed
             const mainEmbed = new EmbedBuilder()
-                .setTitle(`Analysis: ${analysisScope}`)
-                .setDescription(analysis.actuallyDiscussed || 'No clear discussion summary available.')
-                .setColor(0x2ECC71)
+                .setTitle(`📊 Chat Analysis: ${analysisScope}`)
+                .setDescription(analysis.summary || 'Analysis completed.')
+                .setColor(0x00AE86)
                 .setTimestamp()
-                .setFooter({ 
-                    text: `${messages.length} messages analyzed from last ${daysToAnalyze} days`
+                .setFooter({
+                    text: `Analyzed ${messages.length} messages from the last ${daysToAnalyze} days`
                 });
+
+            // Add key insights
+            if (analysis.keyTopics && analysis.keyTopics.length > 0) {
+                mainEmbed.addFields({
+                    name: '🎯 Key Topics Discussed',
+                    value: analysis.keyTopics.map((topic, i) => `${i + 1}. ${topic}`).join('\n').substring(0, 1024),
+                    inline: false
+                });
+            }
+
+            if (analysis.decisions && analysis.decisions.length > 0) {
+                mainEmbed.addFields({
+                    name: '✅ Decisions & Consensus',
+                    value: analysis.decisions.map((decision, i) => `${i + 1}. ${decision}`).join('\n').substring(0, 1024),
+                    inline: false
+                });
+            }
 
             embeds.push(mainEmbed);
 
-            // User concerns embed - the most important part
-            if (analysis.userConcerns && analysis.userConcerns.length > 0) {
-                const concernsEmbed = new EmbedBuilder()
-                    .setTitle('What Users Actually Said')
+            // Developer action items embed
+            if (analysis.actionItems && analysis.actionItems.length > 0) {
+                const actionEmbed = new EmbedBuilder()
+                    .setTitle('🛠️ Developer Action Items')
+                    .setDescription('Prioritized implementation tasks based on the discussion:')
                     .setColor(0x3498DB);
 
-                const concernsText = analysis.userConcerns
-                    .map((concern, i) => `**${concern.user}**: "${concern.said}"\n> Wants: ${concern.wants}`)
+                const actionItemsText = analysis.actionItems
+                    .map((item, i) => `**${i + 1}.** ${item.task}\n   📌 Priority: ${item.priority || 'Normal'}\n   💡 *${item.reason || 'Derived from discussion'}*`)
                     .join('\n\n');
 
-                concernsEmbed.setDescription(concernsText.substring(0, 4096));
-                embeds.push(concernsEmbed);
+                actionEmbed.addFields({
+                    name: 'Implementation Tasks',
+                    value: actionItemsText.substring(0, 4096),
+                    inline: false
+                });
+
+                embeds.push(actionEmbed);
             }
 
-            // Agreements/decisions (if any)
-            if (analysis.agreements && analysis.agreements.length > 0) {
-                const agreementsEmbed = new EmbedBuilder()
-                    .setTitle('Decisions Made')
-                    .setColor(0x27AE60);
-
-                const agreementsText = analysis.agreements
-                    .map((agreement, i) => `${i + 1}. ${agreement}`)
-                    .join('\n');
-
-                agreementsEmbed.setDescription(agreementsText.substring(0, 4096));
-                embeds.push(agreementsEmbed);
-            }
-
-            // Action items (only if users actually requested them)
-            if (analysis.actionableItems && analysis.actionableItems.length > 0) {
-                const actionsEmbed = new EmbedBuilder()
-                    .setTitle('What Users Want You To Do')
+            // Technical insights embed (if detailed mode)
+            if (detailed && analysis.technicalInsights) {
+                const techEmbed = new EmbedBuilder()
+                    .setTitle('🔧 Technical Analysis')
                     .setColor(0xE74C3C);
 
-                const actionsText = analysis.actionableItems
-                    .map((item, i) => `**${i + 1}.** ${item.task}\nRequested by: ${item.requestedBy} (${item.urgency} priority)`)
-                    .join('\n\n');
+                if (analysis.technicalInsights.technologies) {
+                    techEmbed.addFields({
+                        name: '💻 Technologies Mentioned',
+                        value: analysis.technicalInsights.technologies.join(', ').substring(0, 1024),
+                        inline: false
+                    });
+                }
 
-                actionsEmbed.setDescription(actionsText.substring(0, 4096));
-                embeds.push(actionsEmbed);
+                if (analysis.technicalInsights.patterns) {
+                    techEmbed.addFields({
+                        name: '📐 Design Patterns & Architecture',
+                        value: analysis.technicalInsights.patterns.join('\n').substring(0, 1024),
+                        inline: false
+                    });
+                }
+
+                if (analysis.technicalInsights.suggestions) {
+                    techEmbed.addFields({
+                        name: '💡 Technical Suggestions',
+                        value: analysis.technicalInsights.suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n').substring(0, 1024),
+                        inline: false
+                    });
+                }
+
+                embeds.push(techEmbed);
             }
 
-            // Next steps (if mentioned)
-            if (analysis.nextStepsFromChat && analysis.nextStepsFromChat.length > 0) {
-                const nextEmbed = new EmbedBuilder()
-                    .setTitle('Next Steps Suggested')
+            // Productivity insights embed
+            if (analysis.productivityInsights) {
+                const prodEmbed = new EmbedBuilder()
+                    .setTitle('📈 Productivity Insights')
+                    .setColor(0x2ECC71);
+
+                if (analysis.productivityInsights.blockers) {
+                    prodEmbed.addFields({
+                        name: '🚧 Identified Blockers',
+                        value: analysis.productivityInsights.blockers.join('\n').substring(0, 1024),
+                        inline: false
+                    });
+                }
+
+                if (analysis.productivityInsights.improvements) {
+                    prodEmbed.addFields({
+                        name: '⚡ Process Improvements',
+                        value: analysis.productivityInsights.improvements.join('\n').substring(0, 1024),
+                        inline: false
+                    });
+                }
+
+                if (analysis.productivityInsights.nextSteps) {
+                    prodEmbed.addFields({
+                        name: '➡️ Recommended Next Steps',
+                        value: analysis.productivityInsights.nextSteps.join('\n').substring(0, 1024),
+                        inline: false
+                    });
+                }
+
+                embeds.push(prodEmbed);
+            }
+
+            // Participant insights (if available)
+            if (analysis.participantHighlights) {
+                const participantEmbed = new EmbedBuilder()
+                    .setTitle('👥 Participant Contributions')
+                    .setDescription('Key contributors and their focus areas:')
                     .setColor(0x9B59B6);
 
-                const nextText = analysis.nextStepsFromChat
-                    .map((step, i) => `${i + 1}. ${step}`)
+                const participantText = Object.entries(analysis.participantHighlights)
+                    .slice(0, 5) // Limit to top 5 contributors
+                    .map(([user, contribution]) => `**${user}:** ${contribution}`)
                     .join('\n');
 
-                nextEmbed.setDescription(nextText.substring(0, 4096));
-                embeds.push(nextEmbed);
-            }
+                participantEmbed.addFields({
+                    name: 'Top Contributors',
+                    value: participantText.substring(0, 1024),
+                    inline: false
+                });
 
-            // Technical mentions (only if actually discussed)
-            if (detailed && analysis.technicalMentions && analysis.technicalMentions.length > 0) {
-                const techEmbed = new EmbedBuilder()
-                    .setTitle('Technical Details Mentioned')
-                    .setColor(0x95A5A6);
-
-                const techText = analysis.technicalMentions
-                    .map((mention, i) => `${i + 1}. ${mention}`)
-                    .join('\n');
-
-                techEmbed.setDescription(techText.substring(0, 4096));
-                embeds.push(techEmbed);
+                embeds.push(participantEmbed);
             }
 
             // Send the analysis

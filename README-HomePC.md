@@ -30,13 +30,6 @@ A comprehensive Discord bot for task management, change tracking, and announceme
 - Historical summary viewing and management
 - Cost-effective with Claude 3.5 Haiku AI model
 
-### Smart Q&A (NEW! 🆕)
-- `/ask` command to query chat history with natural language
-- Context-aware answers based on recent discussions
-- Supports channel-specific and server-wide questions
-- Provides confidence levels and supporting details
-- Enhanced analysis with specific focus areas
-
 ### System Features
 - Persistent SQLite database storage with automated backups
 - Comprehensive error handling and logging
@@ -202,16 +195,16 @@ node -e "require('./src/utils/ai').checkAIStatus().then(console.log)"
 ### Chat Summarization (NEW!)
 - `/summarize channel [channel] [hours]` - Summarize messages from a specific channel
 - `/summarize server [hours]` - Generate server-wide activity summary (requires Manage Messages)
-
 - `/summarize history [days]` - View recent summaries and activity reports
 
-### Smart Q&A
-- `/ask channel <question> [channel] [hours|messages]` - Ask a question about a specific channel
-- `/ask server <question> [hours|messages]` - Ask a question about the whole server
-
-### Enhanced Analysis
-- `/analyse channel [channel] [days] [focus] [aggressive_preprocessing]` - Focus analysis on specific topics
-- `/analyse server [days] [focus]` - Focus server-wide analysis
+### Chat Analysis (NEW!)
+- `/analyse channel <channel> [days] [detailed]` - Analyze a specific channel's chat history with developer-focused insights
+- `/analyse current [days] [detailed]` - Analyze the current channel's recent history
+- `/analyse server [days] [detailed]` - Analyze entire server's recent chat history
+  - Generates actionable developer tasks with priorities
+  - Identifies technical decisions and architectural patterns
+  - Provides productivity insights and blockers
+  - Admin-only command for comprehensive team analysis
 
 ## Troubleshooting
 

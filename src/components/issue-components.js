@@ -1,30 +1,31 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder } = require('discord.js');
+const { ISSUE_STATUS, ISSUE_SEVERITY, COLORS } = require('../utils/constants');
 
 function getStatusMeta(status) {
-  const normalized = (status || 'open').toLowerCase();
+  const normalized = (status || ISSUE_STATUS.OPEN).toLowerCase();
   switch (normalized) {
-    case 'bug':
-      return { label: 'Bug', emoji: '🐛', color: 0xe67e22 };
-    case 'solved':
+    case ISSUE_STATUS.BUG:
+      return { label: 'Bug', color: COLORS.ORANGE };
+    case ISSUE_STATUS.SOLVED:
     case 'closed':
     case 'resolved':
-      return { label: 'Solved', emoji: '✅', color: 0x2ecc71 };
+      return { label: 'Solved', color: COLORS.GREEN };
     default:
-      return { label: 'Open', emoji: '🟡', color: 0xf1c40f };
+      return { label: 'Open', color: COLORS.YELLOW };
   }
 }
 
 function getSeverityLabel(severity) {
-  const s = (severity || 'normal').toLowerCase();
-  if (s === 'low') return 'Low';
-  if (s === 'high') return 'High';
-  if (s === 'critical') return 'Critical';
+  const s = (severity || ISSUE_SEVERITY.NORMAL).toLowerCase();
+  if (s === ISSUE_SEVERITY.LOW) return 'Low';
+  if (s === ISSUE_SEVERITY.HIGH) return 'High';
+  if (s === ISSUE_SEVERITY.CRITICAL) return 'Critical';
   return 'Normal';
 }
 
 function issueActionRow(issueId, status, messageId) {
-  const isBug = (status || '').toLowerCase() === 'bug';
-  const isSolved = (status || '').toLowerCase() === 'solved';
+  const isBug = (status || '').toLowerCase() === ISSUE_STATUS.BUG;
+  const isSolved = (status || '').toLowerCase() === ISSUE_STATUS.SOLVED;
   const isOpen = !isBug && !isSolved;
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -99,11 +100,10 @@ function buildIssueEmbed(issue, reporterUser) {
   const statusMeta = getStatusMeta(issue.status);
   const severity = getSeverityLabel(issue.severity);
   const embed = new EmbedBuilder()
-    .setTitle(`${statusMeta.emoji} ${issue.title}`)
+    .setTitle(issue.title)
     .setDescription(issue.description || 'No description provided')
     .setColor(statusMeta.color)
     .addFields(
-      { name: 'Status', value: `${statusMeta.label}`, inline: true },
       { name: 'Severity', value: `${severity}`, inline: true },
       { name: 'Reporter', value: reporterUser ? `<@${reporterUser.id}>` : (issue.reporter_id ? `<@${issue.reporter_id}>` : 'Unknown'), inline: true }
     )
@@ -121,10 +121,6 @@ function buildIssueEmbed(issue, reporterUser) {
     } catch (_) {
       // ignore
     }
-  }
-
-  if (issue.thread_id) {
-    embed.addFields({ name: 'Thread', value: `<#${issue.thread_id}>` });
   }
 
   return embed;

@@ -110,7 +110,6 @@ CREATE TABLE IF NOT EXISTS issues (
   created_at INTEGER NOT NULL,
   updated_at INTEGER
 );
-<<<<<<< HEAD
 
 CREATE TABLE IF NOT EXISTS admin_tasks (
   task_id TEXT PRIMARY KEY,
@@ -131,59 +130,6 @@ CREATE TABLE IF NOT EXISTS admin_task_assignees (
   PRIMARY KEY(task_id, user_id),
   FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
 );
-
-CREATE TABLE IF NOT EXISTS simple_tasks (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  assignee_ids TEXT DEFAULT '[]',
-  creator_id TEXT NOT NULL,
-  guild_id TEXT NOT NULL,
-  status TEXT DEFAULT 'pending',
-  completed_at INTEGER,
-  created_at INTEGER NOT NULL,
-  message_id TEXT,
-  channel_id TEXT
-);
-
-CREATE TABLE IF NOT EXISTS changelog_versions (
-  version TEXT PRIMARY KEY,
-  thread_id TEXT NOT NULL,
-  channel_id TEXT NOT NULL,
-  guild_id TEXT NOT NULL,
-  status TEXT DEFAULT 'open',
-  is_current INTEGER DEFAULT 0,
-  created_by TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  completed_at INTEGER,
-  completion_report TEXT
-);
-
-CREATE TABLE IF NOT EXISTS changelog_entries (
-  id TEXT PRIMARY KEY,
-  version TEXT NOT NULL,
-  entry_type TEXT NOT NULL,
-  entry_text TEXT NOT NULL,
-  task_id TEXT,
-  author_id TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY(version) REFERENCES changelog_versions(version) ON DELETE CASCADE,
-  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE SET NULL
-);
-
-CREATE TABLE IF NOT EXISTS admin_task_thread_messages (
-  message_id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL,
-  thread_id TEXT NOT NULL,
-  author_id TEXT NOT NULL,
-  author_tag TEXT NOT NULL,
-  content TEXT NOT NULL,
-  timestamp INTEGER NOT NULL,
-  attachments TEXT,
-  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
-);
-=======
->>>>>>> 0927858 (added fixes and extensions)
 `);
 // Export our file-based database implementation
 module.exports = db;

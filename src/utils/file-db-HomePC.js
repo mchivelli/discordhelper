@@ -26,11 +26,7 @@ const TABLES = {
   chat_summaries: path.join(DB_ROOT, 'chat_summaries'),
   issues: path.join(DB_ROOT, 'issues'),
   admin_tasks: path.join(DB_ROOT, 'admin_tasks'),
-  admin_task_assignees: path.join(DB_ROOT, 'admin_task_assignees'),
-  simple_tasks: path.join(DB_ROOT, 'simple_tasks'),
-  changelog_versions: path.join(DB_ROOT, 'changelog_versions'),
-  changelog_entries: path.join(DB_ROOT, 'changelog_entries'),
-  admin_task_thread_messages: path.join(DB_ROOT, 'admin_task_thread_messages')
+  admin_task_assignees: path.join(DB_ROOT, 'admin_task_assignees')
 };
 
 // Ensure all table directories exist
@@ -48,11 +44,7 @@ const cache = {
   chat_summaries: new Map(),
   issues: new Map(),
   admin_tasks: new Map(),
-  admin_task_assignees: new Map(),
-  simple_tasks: new Map(),
-  changelog_versions: new Map(),
-  changelog_entries: new Map(),
-  admin_task_thread_messages: new Map()
+  admin_task_assignees: new Map()
 };
 
 /**
@@ -240,22 +232,6 @@ class QueryBuilder {
   executeSelectQuery(...params) {
     const items = loadTable(this.tableName);
     
-    // Handle changelog_versions queries
-    if (this.tableName === 'changelog_versions') {
-      if (this.query.toLowerCase().includes('where version =')) {
-        return items.find(item => item.version === params[0]) || null;
-      } else if (this.query.toLowerCase().includes('where is_current = 1')) {
-        return items.find(item => item.is_current === 1 || item.is_current === true) || null;
-      }
-    }
-    
-    // Handle changelog_entries queries
-    if (this.tableName === 'changelog_entries') {
-      if (this.query.toLowerCase().includes('where version =')) {
-        return items.find(item => item.version === params[0]) || null;
-      }
-    }
-    
     // Handle common SELECT patterns
     if (this.query.toLowerCase().includes('where id =')) {
       const result = items.find(item => item.id === params[0]) || null;
@@ -352,22 +328,6 @@ class QueryBuilder {
           const endTs = params[idx++];
           filtered = filtered.filter(item => (item.timestamp || 0) <= endTs);
         }
-        // content LIKE filters (keyword search — supports multiple OR'd clauses)
-        const likeCount = (q.match(/content like \?/g) || []).length;
-        if (likeCount > 0) {
-          const likePatterns = [];
-          for (let i = 0; i < likeCount; i++) {
-            likePatterns.push(params[idx++]);
-          }
-          filtered = filtered.filter(item => {
-            const content = (item.content || '').toLowerCase();
-            return likePatterns.some(pattern => {
-              // Convert SQL LIKE %keyword% to simple contains check
-              const keyword = pattern.replace(/%/g, '').toLowerCase();
-              return content.includes(keyword);
-            });
-          });
-        }
         // channel filter (optional)
         if (q.includes('channel_id =')) {
           const channelId = params[idx++];
@@ -388,90 +348,7 @@ class QueryBuilder {
         return filtered;
       }
 
-      // Special handling for chat_summaries queries
-      if (this.tableName === 'chat_summaries') {
-        const q = this.query.toLowerCase();
-        let idx = 0;
-        let filtered = items;
-        
-        if (q.includes('guild_id =')) {
-          const guildId = params[idx++];
-          filtered = filtered.filter(item => item.guild_id === guildId);
-        }
-        
-        if (q.includes('date >=')) {
-          const cutoffDate = params[idx++];
-          filtered = filtered.filter(item => item.date >= cutoffDate);
-        }
-        
-        if (q.includes('channel_id =')) {
-          const channelId = params[idx++];
-          filtered = filtered.filter(item => item.channel_id === channelId);
-        }
-        
-        if (q.includes('order by date desc')) {
-          filtered.sort((a, b) => {
-            if (a.date < b.date) return 1;
-            if (a.date > b.date) return -1;
-            return 0;
-          });
-        } else if (q.includes('order by created_at desc')) {
-          filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-        }
-        
-        if (q.includes('limit')) {
-          const limit = params[params.length - 1];
-          filtered = filtered.slice(0, typeof limit === 'number' ? limit : 0);
-        }
-        
-        console.log(`DEBUG: all() - chat_summaries filtered count:`, filtered.length);
-        return filtered;
-      }
-
-      // Special handling for admin_task_thread_messages queries
-      if (this.tableName === 'admin_task_thread_messages') {
-        const q = this.query.toLowerCase();
-        let idx = 0;
-        let filtered = items;
-        
-        if (q.includes('task_id =')) {
-          const taskId = params[idx++];
-          filtered = filtered.filter(item => item.task_id === taskId);
-        }
-        if (q.includes('thread_id =')) {
-          const threadId = params[idx++];
-          filtered = filtered.filter(item => item.thread_id === threadId);
-        }
-        
-        if (q.includes('order by timestamp desc')) {
-          filtered.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        } else if (q.includes('order by timestamp asc')) {
-          filtered.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-        }
-        
-        if (q.includes('limit ?')) {
-          const limit = params[params.length - 1];
-          filtered = filtered.slice(0, typeof limit === 'number' ? limit : 0);
-        }
-        
-        return filtered;
-      }
-
       let filtered = items;
-      
-      // Handle changelog_versions queries
-      if (this.tableName === 'changelog_versions') {
-        if (this.query.toLowerCase().includes('where status =')) {
-          filtered = items.filter(item => item.status === params[0]);
-        }
-      }
-      
-      // Handle changelog_entries queries
-      if (this.tableName === 'changelog_entries') {
-        if (this.query.toLowerCase().includes('where version =')) {
-          filtered = items.filter(item => item.version === params[0]);
-        }
-      }
       
       if (this.query.toLowerCase().includes('task_id =') || this.query.toLowerCase().includes('task_id=')) {
         console.log(`DEBUG: all() - Filtering ${this.tableName} by task_id = ${params[0]}`);
@@ -493,8 +370,6 @@ class QueryBuilder {
           filtered.sort((a, b) => a.idx - b.idx);
         } else if (this.query.toLowerCase().includes('order by created_at desc')) {
           filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-        } else if (this.query.toLowerCase().includes('order by created_at asc')) {
-          filtered.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
         }
       }
       
@@ -669,28 +544,10 @@ class QueryBuilder {
           }
           break;
         case 'admin_tasks':
-          // Handle both INSERT formats:
-          // Initial INSERT (8 params): task_id, title, description, status, creator_id, channel_id, guild_id, created_at
-          // Full INSERT (10 params): task_id, title, description, status, creator_id, thread_id, channel_id, message_id, guild_id, created_at
-          if (args.length === 8) {
-            // Initial INSERT without thread_id (added later via UPDATE)
+          // Positional: task_id, title, description, status, creator_id, thread_id, channel_id, message_id, guild_id, created_at
+          if (args.length >= 6) {
             item = {
-              id: args[0],
-              task_id: args[0],
-              title: args[1],
-              description: args[2],
-              status: args[3] || 'in_progress',
-              creator_id: args[4],
-              thread_id: null, // Will be set via UPDATE
-              channel_id: args[5],
-              message_id: null,
-              guild_id: args[6],
-              created_at: args[7] || Date.now()
-            };
-          } else if (args.length >= 10) {
-            // Full INSERT with thread_id
-            item = {
-              id: args[0],
+              id: args[0], // Use task_id as id
               task_id: args[0],
               title: args[1],
               description: args[2],
@@ -712,69 +569,6 @@ class QueryBuilder {
               id: compositeId,
               task_id: args[0],
               user_id: args[1]
-            };
-          }
-          break;
-        case 'simple_tasks':
-          if (args.length >= 11) {
-            item = {
-              id: args[0],
-              title: args[1],
-              description: args[2] || '',
-              assignee_ids: args[3] || '[]',
-              creator_id: args[4],
-              guild_id: args[5],
-              status: args[6] || 'pending',
-              completed_at: args[7] || null,
-              created_at: args[8] || Date.now(),
-              message_id: args[9] || null,
-              channel_id: args[10] || null
-            };
-          }
-          break;
-        case 'changelog_versions':
-          // Positional: version, thread_id, channel_id, guild_id, status, is_current, created_by, created_at, message_id (optional)
-          if (args.length >= 8) {
-            item = {
-              version: args[0],
-              thread_id: args[1],
-              channel_id: args[2],
-              guild_id: args[3],
-              status: args[4],
-              is_current: args[5],
-              created_by: args[6],
-              created_at: args[7],
-              message_id: args.length >= 9 ? args[8] : null // Optional message_id
-            };
-          }
-          break;
-        case 'changelog_entries':
-          // Positional: id, version, entry_type, entry_text, task_id, author_id, created_at
-          if (args.length >= 7) {
-            item = {
-              id: args[0],
-              version: args[1],
-              entry_type: args[2],
-              entry_text: args[3],
-              task_id: args[4] || null,
-              author_id: args[5],
-              created_at: args[6] || Date.now()
-            };
-          }
-          break;
-        case 'admin_task_thread_messages':
-          // Positional: message_id, task_id, thread_id, author_id, author_tag, content, timestamp, attachments
-          if (args.length >= 7) {
-            item = {
-              id: args[0], // use message_id as file id
-              message_id: args[0],
-              task_id: args[1],
-              thread_id: args[2],
-              author_id: args[3],
-              author_tag: args[4],
-              content: args[5] || '',
-              timestamp: args[6] || Date.now(),
-              attachments: args[7] || null
             };
           }
           break;
@@ -800,33 +594,13 @@ class QueryBuilder {
     const items = loadTable(this.tableName);
     let deletedCount = 0;
     
-    // Handle chat_messages retention cleanup
-    if (this.tableName === 'chat_messages' && this.query.toLowerCase().includes('timestamp <')) {
-      const cutoff = args[0];
-      items.forEach(item => {
-        const ts = item.timestamp || 0;
-        if (ts < cutoff) {
-          deleteItem(this.tableName, item.id);
-          deletedCount++;
-        }
-      });
-      return { changes: deletedCount };
-    }
-
     if (this.query.toLowerCase().includes('where task_id =')) {
       const taskId = args[0];
       items.forEach(item => {
         if (item.task_id === taskId) {
-          deleteItem(this.tableName, item.id);
-          deletedCount++;
-        }
-      });
-    } else if (this.query.toLowerCase().includes('where version =')) {
-      // Handle DELETE FROM changelog_entries/changelog_versions WHERE version = ?
-      const version = args[0];
-      items.forEach(item => {
-        if (item.version === version) {
-          deleteItem(this.tableName, item.id);
+          // For admin_task_assignees, use composite ID format
+          const itemId = this.tableName === 'admin_task_assignees' ? item.id : item.id;
+          deleteItem(this.tableName, itemId);
           deletedCount++;
         }
       });
@@ -848,60 +622,6 @@ class QueryBuilder {
   executeUpdate(...args) {
     const items = loadTable(this.tableName);
     let updatedCount = 0;
-    
-    // Handle changelog_versions UPDATE queries
-    if (this.tableName === 'changelog_versions') {
-      // UPDATE changelog_versions SET status = ?, is_current = ?, completed_at = ?, completion_report = ? WHERE version = ?
-      if (this.query.toLowerCase().includes('set status') && this.query.toLowerCase().includes('where version =')) {
-        let status, isCurrent, completedAt, completionReport, version;
-        const q = this.query.toLowerCase();
-        if (q.includes('status = ?') || q.includes('is_current = ?')) {
-          // Parametrized form: status=?, is_current=?, completed_at=?, completion_report=?, WHERE version=?
-          status = args[0];
-          isCurrent = args[1];
-          completedAt = args[2];
-          completionReport = args[3];
-          version = args[4];
-        } else if (q.includes("status = 'complete'") && q.includes('is_current = 0') && q.includes('completed_at = ?') && q.includes('completion_report = ?')) {
-          // Literal form: status='complete', is_current=0, completed_at=?, completion_report=?, WHERE version=?
-          status = 'complete';
-          isCurrent = 0;
-          completedAt = args[0];
-          completionReport = args[1];
-          version = args[2];
-        } else {
-          // Fallback best-effort parse: attempt to map last arg as version
-          completedAt = args[0];
-          completionReport = args[1];
-          version = args[2];
-          // try to infer status/isCurrent literals
-          status = q.includes("status = 'complete'") ? 'complete' : 'open';
-          isCurrent = q.includes('is_current = 0') ? 0 : (q.includes('is_current = 1') ? 1 : 0);
-        }
-        
-        const item = items.find(i => i.version === version);
-        if (item) {
-          item.status = status;
-          item.is_current = isCurrent;
-          item.completed_at = completedAt;
-          item.completion_report = completionReport;
-          saveItem(this.tableName, item);
-          updatedCount = 1;
-        }
-        return { changes: updatedCount };
-      }
-      // UPDATE changelog_versions SET is_current = 0 WHERE is_current = 1
-      if (this.query.toLowerCase().includes('set is_current = 0')) {
-        for (const item of items) {
-          if (item.is_current === 1 || item.is_current === true) {
-            item.is_current = 0;
-            saveItem(this.tableName, item);
-            updatedCount++;
-          }
-        }
-        return { changes: updatedCount };
-      }
-    }
     
     // Parse UPDATE queries based on common patterns
     if (this.tableName === 'issues') {
@@ -1012,7 +732,7 @@ class QueryBuilder {
       const status = args[0];
       const id = args[1];
       let item;
-
+      
       if (this.query.toLowerCase().includes('where task_id =')) {
         // For admin_tasks table: UPDATE admin_tasks SET status = ? WHERE task_id = ?
         item = items.find(i => i.task_id === id);
@@ -1020,19 +740,9 @@ class QueryBuilder {
         // For other tables: WHERE id = ? or WHERE rowid = ?
         item = items.find(i => i.id == id);
       }
-
+      
       if (item) {
         item.status = status;
-        saveItem(this.tableName, item);
-        updatedCount = 1;
-      }
-    } else if (this.query.toLowerCase().includes('set thread_id =') && this.query.toLowerCase().includes('where task_id =')) {
-      // Handle: UPDATE admin_tasks SET thread_id = ? WHERE task_id = ?
-      const threadId = args[0];
-      const taskId = args[1];
-      const item = items.find(i => i.task_id === taskId);
-      if (item) {
-        item.thread_id = threadId;
         saveItem(this.tableName, item);
         updatedCount = 1;
       }
@@ -1052,40 +762,6 @@ class QueryBuilder {
       const item = items.find(i => i.task_id === taskId && i.done === 0);
       if (item) {
         item.assignee = assignee;
-        saveItem(this.tableName, item);
-        updatedCount = 1;
-      }
-    } else if (this.tableName === 'simple_tasks' && this.query.toLowerCase().includes('set status =') && this.query.toLowerCase().includes('completed_at =')) {
-      // Handle: UPDATE simple_tasks SET status = ?, completed_at = ? WHERE id = ?
-      const status = args[0];
-      const completed_at = args[1];
-      const id = args[2];
-      const item = items.find(i => i.id === id);
-      if (item) {
-        item.status = status;
-        item.completed_at = completed_at;
-        saveItem(this.tableName, item);
-        updatedCount = 1;
-      }
-    } else if (this.tableName === 'simple_tasks' && this.query.toLowerCase().includes('set assignee_ids =')) {
-      // Handle: UPDATE simple_tasks SET assignee_ids = ? WHERE id = ?
-      const assignee_ids = args[0];
-      const id = args[1];
-      const item = items.find(i => i.id === id);
-      if (item) {
-        item.assignee_ids = assignee_ids;
-        saveItem(this.tableName, item);
-        updatedCount = 1;
-      }
-    } else if (this.tableName === 'simple_tasks' && this.query.toLowerCase().includes('set message_id =') && this.query.toLowerCase().includes('channel_id =')) {
-      // Handle: UPDATE simple_tasks SET message_id = ?, channel_id = ? WHERE id = ?
-      const message_id = args[0];
-      const channel_id = args[1];
-      const id = args[2];
-      const item = items.find(i => i.id === id);
-      if (item) {
-        item.message_id = message_id;
-        item.channel_id = channel_id;
         saveItem(this.tableName, item);
         updatedCount = 1;
       }
@@ -1134,15 +810,12 @@ function parseTableName(query) {
   const lowerQuery = query.toLowerCase();
   const tableNames = Object.keys(TABLES);
   
-  // Sort table names by length (descending) to avoid substring collisions
-  // e.g., check 'admin_tasks' and 'simple_tasks' before 'tasks' to avoid mismatches
+  // Sort table names by length (longest first) to match more specific table names first
+  // This prevents 'tasks' from matching when we want 'admin_tasks'
   const sortedTableNames = tableNames.sort((a, b) => b.length - a.length);
   
   for (const table of sortedTableNames) {
-    // Use word boundaries to match complete table names
-    const regex = new RegExp(`\\b${table}\\b`, 'i');
-    if (regex.test(lowerQuery)) {
-      console.log(`[file-db] Parsed table name: ${table} from query: ${query.substring(0, 100)}...`);
+    if (lowerQuery.includes(table)) {
       return table;
     }
   }
@@ -1153,7 +826,6 @@ function parseTableName(query) {
     return null;
   }
   
-  console.warn(`[file-db] Could not parse table name from query: ${query.substring(0, 100)}...`);
   return null;
 }
 
