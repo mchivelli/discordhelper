@@ -6,7 +6,7 @@ const path = require('path');
 
 const commands = [];
 const commandFiles = fs.readdirSync(path.join(__dirname, '../commands'))
-  .filter(file => file.endsWith('.js'))
+  .filter(file => file.endsWith('.js') && !file.includes('-HomePC'))
   // Sort by name for deterministic ordering
   .sort((a, b) => a.localeCompare(b));
 

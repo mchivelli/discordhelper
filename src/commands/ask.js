@@ -148,84 +148,35 @@ module.exports = {
       // Call AI to answer the question
       const result = await answerQuestionWithContext(question, messages, context);
 
-      // Build response embed
+      // Build response embed — compact, no emoji clutter
+      const confidenceColor = { 'High': 0x57F287, 'Medium': 0xFEE75C, 'Low': 0xED4245 };
+      const strategyLabel = { 'hybrid': 'Summaries + Keywords', 'summary-only': 'Summaries', 'raw': 'Raw Messages' };
+
       const embed = new EmbedBuilder()
-        .setTitle(`💬 ${question.length > 80 ? question.substring(0, 77) + '...' : question}`)
+        .setTitle(question.length > 100 ? question.substring(0, 97) + '...' : question)
         .setDescription(result.answer)
-        .setColor(result.confidence === 'High' ? 0x5865F2 : result.confidence === 'Medium' ? 0xFEE75C : 0xED4245);
+        .setColor(confidenceColor[result.confidence] || 0x5865F2);
 
-      // Add metadata fields
-      embed.addFields([
-        {
-          name: '📊 Analysis Scope',
-          value: `${result.messageCount} messages from ${scope}`,
-          inline: true
-        },
-        {
-          name: '👥 Participants',
-          value: `${result.participantCount} user${result.participantCount !== 1 ? 's' : ''}`,
-          inline: true
-        },
-        {
-          name: '📅 Time Period',
-          value: timeRange,
-          inline: true
-        }
-      ]);
-
-      // Add confidence and strategy indicators
-      const confidenceEmoji = {
-        'High': '🟢',
-        'Medium': '🟡',
-        'Low': '🔴'
-      }[result.confidence] || '⚪';
-
-      const strategyLabel = {
-        'hybrid': '📚 Summaries + Targeted Messages',
-        'summary-only': '📚 Existing Summaries',
-        'raw': '📝 Raw Messages'
-      }[result.strategy] || result.strategy;
-
-      embed.addFields([
-        {
-          name: '🎯 Confidence',
-          value: `${confidenceEmoji} ${result.confidence}`,
-          inline: true
-        },
-        {
-          name: '🔍 Strategy',
-          value: strategyLabel,
-          inline: true
-        }
-      ]);
-
-      // Add coverage warning if data is incomplete
+      // Single compact metadata field
+      const meta = [
+        `**Scope:** ${result.messageCount} msgs from ${scope} (${timeRange})`,
+        `**Confidence:** ${result.confidence} | **Strategy:** ${strategyLabel[result.strategy] || result.strategy}`
+      ];
       if (typeof result.coveragePct === 'number' && result.coveragePct < 80) {
-        embed.addFields([{
-          name: '⚠️ Data Coverage',
-          value: `${result.coveragePct}% of the requested time range has stored messages. Answer may be incomplete.`,
-          inline: false
-        }]);
+        meta.push(`**Coverage:** ${result.coveragePct}% — answer may be incomplete`);
       }
+      embed.addFields([{ name: 'Details', value: meta.join('\n'), inline: false }]);
 
-      // Add supporting details if available
+      // Supporting details — compact
       if (result.supportingDetails && result.supportingDetails.length > 0) {
         const detailsText = result.supportingDetails
-          .slice(0, 5)  // Max 5 details
-          .map((detail, i) => `• ${detail}`)
+          .slice(0, 4)
+          .map(d => `- ${d}`)
           .join('\n');
-
-        embed.addFields([
-          {
-            name: '📌 Supporting Details',
-            value: detailsText.substring(0, 1024)  // Discord field limit
-          }
-        ]);
+        embed.addFields([{ name: 'Evidence', value: detailsText.substring(0, 1024) }]);
       }
 
-      embed.setFooter({
-        text: `AI Q&A | ${result.modelUsed} | ~${result.tokensUsed} tokens | ${result.coveragePct ?? '?'}% coverage`
-      });
+      embed.setFooter({ text: `${result.modelUsed} | ${result.tokensUsed} tokens | ${result.coveragePct ?? '?'}% coverage` });
       embed.setTimestamp();
 
       // Send response

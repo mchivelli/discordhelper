@@ -566,15 +566,17 @@ function buildTranscript(lines, maxTokenBudget) {
   const out = [];
   let usedCount = 0;
   for (const m of lines) {
-    const time = new Date(m.timestamp).toISOString().substring(11, 16); // HH:MM 24h
-    const line = `[${time}] ${m.username}: ${m.content}`;
+    const d = new Date(m.timestamp);
+    const date = `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
+    const time = d.toISOString().substring(11, 16);
+    const line = `[${date} ${time}] ${m.username}: ${m.content}`;
     const t = estimateTokensFromText(line) + 1;
     if (usedTokens + t > maxTokenBudget) break;
     usedTokens += t;
     out.push(line);
     usedCount++;
   }
-  return { transcript: out.join('\n'), usedCount, fits: usedCount === lines.length };
+  return { transcript: out.join('\n'), usedCount, tokenCount: usedTokens, fits: usedCount === lines.length };
 }
 
 async function summarizeChunk(transcript, chunkIndex, totalChunks, context) {
@@ -1325,46 +1327,28 @@ async function answerQuestionWithContext(question, messages, context = {}) {
     const participants = new Set(messages.map(m => m.username).filter(Boolean));
 
     // Build prompt
-    const prompt = `You are analyzing Discord chat context to answer a specific question.
+    const prompt = `Answer a question about Discord chat history. Be direct and concise. No filler, no emojis.
 
 QUESTION: ${question}
 
-CONTEXT FROM ${context.scope || 'channel'} (${context.timeRange || 'recent messages'}):
+CHAT CONTEXT (${context.scope || 'channel'}, ${context.timeRange || 'recent'}):
 ${contextBlock}
 
-METADATA:
-- Time period: ${context.timeRange || 'Not specified'}
-- Messages in database: ${messages.length} | Used in context: ${usedCount || 'summaries used'}
-- Participants: ${Array.from(participants).join(', ')}
-- Location: ${context.channelName || context.guildName || 'Unknown'}
-- Data coverage: ${coveragePct}% of requested time range has stored messages
-- Context strategy: ${strategy}
+Participants: ${Array.from(participants).join(', ')}
+Coverage: ${coveragePct}% of requested time range
 
-INSTRUCTIONS:
-1. Answer the question directly and concisely based ONLY on the context above
-2. Quote specific users when their statements are relevant (use exact usernames)
-3. If the context doesn't contain enough information to answer confidently, say so explicitly
-4. Provide timestamps or context when it adds clarity
-5. Keep your response focused and under 500 words
-6. Be factual - don't speculate beyond what's in the context
-7. If using summary context, note that summaries may omit fine-grained details
+RULES:
+- Answer directly in 1-3 sentences. Only expand if the question requires detail.
+- Always include the DATE (e.g. "on 02/11" or "Feb 11") when referencing events, not just the time.
+- Use exact usernames when attributing statements.
+- Only state facts from the context. If unsure, say so.
+- No emojis, no bullet-point lists in the answer unless specifically asked for a list.
+- Supporting details: 2-4 short facts with attribution. Include dates.
 
-Return your answer in this JSON format:
-{
-  "answer": "Your direct answer to the question...",
-  "supportingDetails": [
-    "Relevant detail with attribution (e.g., 'user123 mentioned...')",
-    "Additional context or timestamp"
-  ],
-  "confidence": "High | Medium | Low"
-}
+Return ONLY this JSON:
+{"answer":"...","supportingDetails":["...","..."],"confidence":"High|Medium|Low"}
 
-Confidence levels:
-- High: Question directly addressed in the context
-- Medium: Some relevant information but not comprehensive
-- Low: Little to no relevant information in the context
-
-Return ONLY valid JSON.`;
+Confidence: High = directly answered in context, Medium = partial info, Low = little/no info.`;
 
     const apiMessages = [
       { role: 'user', content: prompt }

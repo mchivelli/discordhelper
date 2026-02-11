@@ -45,7 +45,7 @@ client.changelogSettings = {};
 
 // Load commands
 console.log('Loading commands...');
-const commandFiles = fs.readdirSync(path.join(__dirname, 'commands')).filter(f => f.endsWith('.js'));
+const commandFiles = fs.readdirSync(path.join(__dirname, 'commands')).filter(f => f.endsWith('.js') && !f.includes('-HomePC'));
 console.log(`Found ${commandFiles.length} command files: ${commandFiles.join(', ')}`);
 logger.info(`Loading ${commandFiles.length} commands...`);
 
