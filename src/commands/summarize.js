@@ -318,12 +318,15 @@ module.exports = {
       });
 
       let totalFetched = 0;
-      let totalStored = 0;
+      let newlyStored = 0;
+      let alreadyExisted = 0;
+      let botMessages = 0;
       const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000);
       
       // Fetch messages from Discord API
       let lastMessageId = null;
       let keepFetching = true;
+      let batchCount = 0;
       
       while (keepFetching) {
         const options = { limit: 100 };
@@ -338,6 +341,7 @@ module.exports = {
           break;
         }
         
+        batchCount++;
         let messagesInTimeRange = 0;
         
         for (const [messageId, message] of messages) {
@@ -351,15 +355,20 @@ module.exports = {
           
           messagesInTimeRange++;
           
-          // Store non-bot messages
+          // Store non-bot messages (storeChatMessage handles dedup internally)
           if (!message.author.bot && message.guild) {
             try {
-              storeChatMessage(db, message);
-              totalStored++;
+              const result = storeChatMessage(db, message);
+              if (result.stored) {
+                newlyStored++;
+              } else if (result.existed) {
+                alreadyExisted++;
+              }
             } catch (error) {
               logger.error(`Failed to store message ${messageId}:`, error);
-              console.log(`Failed to store message ${messageId}:`, error);
             }
+          } else if (message.author.bot) {
+            botMessages++;
           }
           
           lastMessageId = messageId;
@@ -370,29 +379,35 @@ module.exports = {
           keepFetching = false;
         }
         
+        // Progress update every 5 batches (~500 messages)
+        if (keepFetching && batchCount % 5 === 0) {
+          await interaction.editReply({ 
+            content: `🔄 Fetching... ${totalFetched} messages processed so far (${newlyStored} new, ${alreadyExisted} already stored)` 
+          }).catch(() => {});
+        }
+        
         // Rate limiting - small delay between API calls
         if (keepFetching) {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
       
-      // Get the message count in database (using file-based DB)
-      const allMessages = db.prepare('SELECT COUNT(*) as count FROM chat_messages').get();
-      const finalCount = allMessages ? allMessages.count : totalStored;
-      
       const embed = new EmbedBuilder()
         .setTitle('📥 Message History Fetched')
         .setDescription(`Successfully fetched message history from ${channel}`)
         .addFields(
           { name: '📊 Messages Processed', value: totalFetched.toString(), inline: true },
-          { name: '💾 Messages Stored', value: totalStored.toString(), inline: true },
-          { name: '📝 Total in Database', value: finalCount.toString(), inline: true },
+          { name: '💾 Newly Stored', value: newlyStored.toString(), inline: true },
+          { name: '📂 Already Existed', value: alreadyExisted.toString(), inline: true },
+          { name: '🤖 Bot Messages (skipped)', value: botMessages.toString(), inline: true },
           { name: '⏱️ Time Range', value: `${days} day(s)`, inline: true }
         )
-        .setColor(0x00ff00)
+        .setColor(newlyStored > 0 ? 0x00ff00 : 0xFEE75C)
         .setTimestamp()
         .setFooter({ 
-          text: 'You can now use /summarize channel or /summarize server',
+          text: newlyStored > 0 
+            ? 'You can now use /ask, /summarize, or /analyse on this data' 
+            : 'All messages were already stored — no new data added',
           iconURL: interaction.client.user.displayAvatarURL()
         });
 
@@ -401,7 +416,7 @@ module.exports = {
         embeds: [embed] 
       });
       
-      logger.info(`Fetched ${totalFetched} messages, stored ${totalStored} from #${channel.name} (${days} days) by ${interaction.user.tag}`);
+      logger.info(`Backfill #${channel.name}: ${totalFetched} processed, ${newlyStored} new, ${alreadyExisted} existed, ${botMessages} bot (${days}d) by ${interaction.user.tag}`);
       
     } catch (error) {
       logger.error('Error fetching message history:', error);

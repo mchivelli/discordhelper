@@ -179,3 +179,54 @@ Look for these log lines to verify the strategy is working:
 - **Token savings:** Compare `~X tokens` in footer between raw vs hybrid strategies
 - **Speed:** Hybrid/summary-only should respond faster (less context for LLM to process)
 - **Accuracy:** Answers should still be specific and attribute to correct usernames
+
+---
+
+## Backfill Dedup & Consistency Improvements
+
+### Problem
+Running `/summarize fetch_history` multiple times on the same channel would:
+- Re-write every message to disk even if already stored (wasted I/O)
+- Report misleading stats ("Stored 500" when 400 were already there)
+- `fetchMessagesFromDiscord()` used `message.author.username` while `storeChatMessage()` used `message.author.tag` — inconsistent records
+
+### Changes
+
+**`src/utils/ai.js`:**
+
+- **New: `chatMessageExists(db, compositeId)`** — O(1) check using direct file/cache lookup (doesn't load entire table)
+- **`storeChatMessage()` now dedup-aware:**
+  - Checks if message already exists before writing
+  - Returns `{ stored: true, existed: false }` for new messages
+  - Returns `{ stored: false, existed: true }` for duplicates (no disk write)
+  - Username field now uses `message.author.tag || message.author.username` for consistency
+- **`fetchMessagesFromDiscord()` fixed:**
+  - Uses `storeChatMessage()` dedup (no redundant writes)
+  - Skips bot messages from storage (matches live handler behavior)
+  - In-memory results now include `user_id`, `attachments` fields matching DB schema
+  - Username uses `.tag || .username` consistently
+
+**`src/commands/summarize.js` — `handleFetchHistory()`:**
+
+- Tracks **4 separate counters**: processed, newly stored, already existed, bot messages
+- Shows accurate breakdown in response embed:
+  - 💾 Newly Stored — actually new messages written to DB
+  - 📂 Already Existed — skipped because already in DB
+  - 🤖 Bot Messages — skipped by design
+- **Progress updates** every ~500 messages during long fetches
+- Embed color: green if new data added, yellow if everything already existed
+- Footer tells user what commands are available next
+
+### Data Structure Consistency
+
+All message sources now produce identical field structures:
+
+| Field | Live handler (`index.js`) | Backfill (`fetch_history`) | Analyse fallback (`fetchMessagesFromDiscord`) |
+|-------|--------------------------|---------------------------|----------------------------------------------|
+| `id` | `guildId_channelId_msgId` | Same | Same |
+| `username` | `.tag \|\| .username` | `.tag \|\| .username` | `.tag \|\| .username` |
+| `user_id` | `author.id` | `author.id` | `author.id` |
+| `content` | `content \|\| ''` | `content \|\| ''` | `content \|\| ''` |
+| `attachments` | JSON or null | JSON or null | JSON or null |
+| Bot filtered | Yes | Yes | Yes |
+| Dedup | Yes | Yes | Yes |

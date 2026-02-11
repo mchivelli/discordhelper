@@ -396,16 +396,46 @@ async function checkAIStatus() {
   }
 }
 
-// Store a Discord message in the database for summarization
+/**
+ * Check if a chat message already exists in the database.
+ * @param {Object} db - Database instance
+ * @param {string} compositeId - The composite key (guildId_channelId_messageId)
+ * @returns {boolean}
+ */
+function chatMessageExists(db, compositeId) {
+  try {
+    // Use a simple get(id) — in file-db this does a direct cache/file check
+    // which is O(1) instead of loading the entire table via WHERE clause
+    const row = db.prepare('SELECT * FROM chat_messages').get(compositeId);
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Store a Discord message in the database for summarization.
+ * Skips if the message already exists (dedup).
+ * @param {Object} db - Database instance
+ * @param {Object} message - Discord.js Message object
+ * @returns {{ stored: boolean, existed: boolean }}
+ */
 function storeChatMessage(db, message) {
   try {
+    const compositeId = `${message.guild.id}_${message.channel.id}_${message.id}`;
+
+    // Skip if already stored — avoids unnecessary disk I/O on backfill
+    if (chatMessageExists(db, compositeId)) {
+      return { stored: false, existed: true };
+    }
+
     const messageData = {
-      id: `${message.guild.id}_${message.channel.id}_${message.id}`,
+      id: compositeId,
       message_id: message.id,
       channel_id: message.channel.id,
       guild_id: message.guild.id,
       user_id: message.author.id,
-      username: message.author.tag,
+      username: message.author.tag || message.author.username,
       content: message.content || '',
       timestamp: message.createdTimestamp,
       attachments: message.attachments.size > 0 ? JSON.stringify(Array.from(message.attachments.values()).map(a => ({
@@ -415,7 +445,6 @@ function storeChatMessage(db, message) {
       }))) : null
     };
 
-    // Use INSERT for file-based database
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO chat_messages 
       (id, message_id, channel_id, guild_id, user_id, username, content, timestamp, attachments)
@@ -434,7 +463,7 @@ function storeChatMessage(db, message) {
       messageData.attachments
     );
 
-    return true;
+    return { stored: true, existed: false };
   } catch (error) {
     console.error('Error storing chat message:', error);
     throw error;
@@ -1518,19 +1547,26 @@ async function fetchMessagesFromDiscord(channel, startTime, db) {
           break;
         }
 
-        // Store message in database for future use
-        storeChatMessage(db, message);
+        // Store message in database (skips duplicates automatically)
+        if (!message.author.bot && message.guild) {
+          storeChatMessage(db, message);
+        }
 
-        // Add to our results
+        // Add to our results — structure matches DB schema for consistent processing
         messages.push({
           id: `${message.guild.id}_${message.channel.id}_${message.id}`,
           guild_id: message.guild.id,
           channel_id: message.channel.id,
           message_id: message.id,
-          username: message.author.username,
-          content: message.content,
+          user_id: message.author.id,
+          username: message.author.tag || message.author.username,
+          content: message.content || '',
           timestamp: message.createdTimestamp,
-          created_at: Date.now()
+          attachments: message.attachments.size > 0 ? JSON.stringify(Array.from(message.attachments.values()).map(a => ({
+            url: a.url,
+            name: a.name,
+            size: a.size
+          }))) : null
         });
 
         fetchedCount++;
@@ -1859,6 +1895,7 @@ module.exports = {
   enhanceTaskDescription,
   generateFollowUpTasks,
   checkAIStatus,
+  chatMessageExists,
   storeChatMessage,
   generateOfflineSummary,
   generateChatSummary,
