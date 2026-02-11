@@ -664,7 +664,8 @@ class QueryBuilder {
               message_id: args[10] || null,
               details: args[11] || null,
               created_at: args[12] || Date.now(),
-              updated_at: args[13] || Date.now()
+              updated_at: args[13] || Date.now(),
+              details_message_id: null
             };
           }
           break;
@@ -943,24 +944,41 @@ class QueryBuilder {
         }
         return { changes: updatedCount };
       }
-      // Update details
+      // Update details + details_message_id
       if (this.query.toLowerCase().includes('set details')) {
-        let details, updatedAt, id;
-        if (this.query.toLowerCase().includes('updated_at')) {
-          details = args[0];
-          updatedAt = args[1] || Date.now();
-          id = args[2];
+        const q = this.query.toLowerCase();
+        if (q.includes('details_message_id')) {
+          // UPDATE issues SET details = ?, details_message_id = ?, updated_at = ? WHERE id = ?
+          const details = args[0];
+          const detailsMessageId = args[1];
+          const updatedAt = args[2] || Date.now();
+          const id = args[3];
+          const issue = items.find(i => i.id === id);
+          if (issue) {
+            issue.details = details;
+            issue.details_message_id = detailsMessageId;
+            issue.updated_at = updatedAt;
+            saveItem(this.tableName, issue);
+            updatedCount = 1;
+          }
         } else {
-          details = args[0];
-          id = args[1];
-          updatedAt = Date.now();
-        }
-        const issue = items.find(i => i.id === id);
-        if (issue) {
-          issue.details = details;
-          issue.updated_at = updatedAt;
-          saveItem(this.tableName, issue);
-          updatedCount = 1;
+          let details, updatedAt, id;
+          if (q.includes('updated_at')) {
+            details = args[0];
+            updatedAt = args[1] || Date.now();
+            id = args[2];
+          } else {
+            details = args[0];
+            id = args[1];
+            updatedAt = Date.now();
+          }
+          const issue = items.find(i => i.id === id);
+          if (issue) {
+            issue.details = details;
+            issue.updated_at = updatedAt;
+            saveItem(this.tableName, issue);
+            updatedCount = 1;
+          }
         }
         return { changes: updatedCount };
       }

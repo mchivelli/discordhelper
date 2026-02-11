@@ -433,13 +433,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
           const detailsObj = { steps, expected, actual, extra };
           const db = require('./utils/db');
-          const { buildIssueEmbed, issueActionRow } = require('./components/issue-components');
+          const { buildIssueEmbed, issueActionRow, buildDetailsEmbed } = require('./components/issue-components');
 
-          // Update DB
-          db.prepare('UPDATE issues SET details = ?, updated_at = ? WHERE id = ?')
-            .run(JSON.stringify(detailsObj), Date.now(), issueId);
-
-          // Fetch the issue to rebuild embed; fallback by message id if id lookup fails
+          // Fetch the issue; fallback by message id if id lookup fails
           let issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
           if (!issue && sourceMessageId) {
             const allIssues = db.prepare('SELECT * FROM issues').all();
@@ -449,22 +445,78 @@ client.on(Events.InteractionCreate, async interaction => {
             return interaction.reply({ content: 'Issue not found.', ephemeral: true });
           }
 
-          const embed = buildIssueEmbed(issue, interaction.user);
-          try {
-            // Update the original issue message if possible
-            if (issue.channel_id && issue.message_id) {
-              const ch = await interaction.client.channels.fetch(issue.channel_id).catch(() => null);
-              if (ch) {
-                const msg = await ch.messages.fetch(issue.message_id).catch(() => null);
-                if (msg) {
-                  await msg.edit({ embeds: [embed], components: [issueActionRow(issue.id, issue.status)] });
-                }
-              }
-            }
-          } catch (e) { }
+          await interaction.deferReply({ ephemeral: true });
 
-          return interaction.reply({ content: 'Details saved.', ephemeral: true });
+          // Find the thread — prefer stored thread_id, fall back to current channel if it's a thread
+          let thread = null;
+          if (issue.thread_id) {
+            thread = await interaction.client.channels.fetch(issue.thread_id).catch(() => null);
+          }
+          if (!thread && interaction.channel?.isThread()) {
+            thread = interaction.channel;
+          }
+
+          // Build the details embed for the pinned message
+          const detailsEmbed = buildDetailsEmbed(issue, detailsObj, interaction.user);
+
+          let detailsMessageId = issue.details_message_id || null;
+
+          if (thread) {
+            if (detailsMessageId) {
+              // Edit existing pinned details message
+              try {
+                const existingMsg = await thread.messages.fetch(detailsMessageId).catch(() => null);
+                if (existingMsg) {
+                  await existingMsg.edit({ embeds: [detailsEmbed] });
+                } else {
+                  // Message was deleted — create a new one
+                  const newMsg = await thread.send({ embeds: [detailsEmbed] });
+                  await newMsg.pin().catch(() => {});
+                  detailsMessageId = newMsg.id;
+                }
+              } catch (e) {
+                logger.warn('Could not edit details message, creating new one:', e.message);
+                const newMsg = await thread.send({ embeds: [detailsEmbed] });
+                await newMsg.pin().catch(() => {});
+                detailsMessageId = newMsg.id;
+              }
+            } else {
+              // Create new pinned details message
+              const newMsg = await thread.send({ embeds: [detailsEmbed] });
+              await newMsg.pin().catch(() => {});
+              detailsMessageId = newMsg.id;
+            }
+          }
+
+          // Update DB with details and details_message_id
+          db.prepare('UPDATE issues SET details = ?, details_message_id = ?, updated_at = ? WHERE id = ?')
+            .run(JSON.stringify(detailsObj), detailsMessageId, Date.now(), issue.id);
+
+          // Also update the thread embed (the one with buttons) if possible
+          if (thread) {
+            try {
+              const updatedIssue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issue.id) || issue;
+              const embed = buildIssueEmbed(updatedIssue, interaction.user);
+              // Find the embed message in the thread (the one with action buttons)
+              const threadMessages = await thread.messages.fetch({ limit: 20 });
+              const embedMsg = threadMessages.find(m =>
+                m.author.id === interaction.client.user.id &&
+                m.components?.length > 0
+              );
+              if (embedMsg) {
+                await embedMsg.edit({ embeds: [embed], components: [issueActionRow(updatedIssue.id, updatedIssue.status, embedMsg.id)] });
+              }
+            } catch (e) {
+              logger.warn('Could not update thread embed:', e.message);
+            }
+          }
+
+          return interaction.editReply({ content: 'Details saved and pinned in thread.' });
         } catch (error) {
+          logger.error('Error saving issue details:', error);
+          if (interaction.deferred) {
+            return interaction.editReply({ content: `Failed to save details: ${error.message}` });
+          }
           return interaction.reply({ content: `Failed to save details: ${error.message}`, ephemeral: true });
         }
       }
@@ -1248,7 +1300,17 @@ View with \`/task list id:${taskId}\`.`
           const { ISSUE_STATUS, PREFIXES } = require('./utils/constants');
 
           if (action === 'details') {
-            const modal = createIssueDetailsModal(issueId, interaction.message?.id);
+            // Fetch existing details to pre-fill modal when editing
+            let existingDetails = null;
+            const existingIssue = db.prepare('SELECT * FROM issues WHERE id = ?').get(issueId);
+            if (existingIssue?.details) {
+              try {
+                existingDetails = typeof existingIssue.details === 'string'
+                  ? JSON.parse(existingIssue.details)
+                  : existingIssue.details;
+              } catch (_) {}
+            }
+            const modal = createIssueDetailsModal(issueId, interaction.message?.id, existingDetails);
             return interaction.showModal(modal);
           }
 
@@ -1335,18 +1397,31 @@ View with \`/task list id:${taskId}\`.`
               else statusPrefix = PREFIXES.ISSUE.OPEN;
 
               const severityLabel = (updated.severity || 'normal').charAt(0).toUpperCase() + (updated.severity || 'normal').slice(1);
-              const compactMessage = `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\``;
+              const desc = updated.description || '';
+              const descSnippet = desc.length > 80 ? desc.substring(0, 77) + '...' : desc;
+              const compactMessage = descSnippet
+                ? `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\`\n> ${descSnippet}`
+                : `${statusPrefix} **${updated.title}** • ${severityLabel} • \`${updated.id}\``;
               await mainMessage.edit(compactMessage);
             } catch (e) {
               logger.warn('Could not update main channel message:', e.message);
             }
           }
 
-          // Rename thread based on status
+          // Rename thread based on status — fallback to current channel if it's a thread
+          let thread = null;
           if (updated.thread_id) {
             try {
-              const thread = await interaction.guild.channels.fetch(updated.thread_id);
-              if (thread && thread.isThread()) {
+              thread = await interaction.guild.channels.fetch(updated.thread_id);
+            } catch (e) {
+              logger.warn('Could not fetch thread by stored ID:', e.message);
+            }
+          }
+          if (!thread && interaction.channel?.isThread()) {
+            thread = interaction.channel;
+          }
+          if (thread && thread.isThread()) {
+            try {
                 let statusPrefix;
                 if (newStatus === ISSUE_STATUS.SOLVED) {
                   statusPrefix = PREFIXES.ISSUE.SOLVED;
@@ -1392,7 +1467,6 @@ View with \`/task list id:${taskId}\`.`
                     logger.warn('Could not unlock/unarchive thread:', err);
                   }
                 }
-              }
             } catch (e) {
               logger.warn('Could not rename thread:', e.message);
             }

@@ -1344,9 +1344,10 @@ RULES:
 - Only state facts from the context. If unsure, say so.
 - No emojis, no bullet-point lists in the answer unless specifically asked for a list.
 - Supporting details: 2-4 short facts with attribution. Include dates.
+- Quotes: 1-3 verbatim short excerpts from the messages that directly support your answer. Format each as "username: exact words" — copy the words exactly, do not paraphrase. Only include quotes if raw messages are available in the context.
 
 Return ONLY this JSON:
-{"answer":"...","supportingDetails":["...","..."],"confidence":"High|Medium|Low"}
+{"answer":"...","supportingDetails":["...","..."],"quotes":["username: exact words","..."],"confidence":"High|Medium|Low"}
 
 Confidence: High = directly answered in context, Medium = partial info, Low = little/no info.`;
 
@@ -1400,6 +1401,7 @@ Confidence: High = directly answered in context, Medium = partial info, Low = li
       answer: parsed.answer || response,
       confidence: parsed.confidence || 'Medium',
       supportingDetails: Array.isArray(parsed.supportingDetails) ? parsed.supportingDetails : [],
+      quotes: Array.isArray(parsed.quotes) ? parsed.quotes : [],
       messageCount: usedCount || messages.length,
       participantCount: participants.size,
       modelUsed: ASK_MODEL,

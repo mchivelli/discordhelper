@@ -83,9 +83,10 @@ module.exports = {
         db.prepare('INSERT INTO issues (id, title, description, status, severity, reporter_id, assignee_id, guild_id, channel_id, thread_id, message_id, details, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
           .run(issue.id, issue.title, issue.description, issue.status, issue.severity, issue.reporter_id, issue.assignee_id, issue.guild_id, issue.channel_id, issue.thread_id, issue.message_id, issue.details, issue.created_at, issue.updated_at);
 
-        // Create compact message in main channel
+        // Create compact message in main channel (with minimal description)
         const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
-        const compactMessage = `${PREFIXES.ISSUE.OPEN} **${title}** • ${severityLabel} • \`${issueId}\``;
+        const descSnippet = description.length > 80 ? description.substring(0, 77) + '...' : description;
+        const compactMessage = `${PREFIXES.ISSUE.OPEN} **${title}** • ${severityLabel} • \`${issueId}\`\n> ${descSnippet}`;
         const message = await channel.send(compactMessage);
 
         // Create thread with status prefix

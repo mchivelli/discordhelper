@@ -110,7 +110,6 @@ CREATE TABLE IF NOT EXISTS issues (
   created_at INTEGER NOT NULL,
   updated_at INTEGER
 );
-<<<<<<< HEAD
 
 CREATE TABLE IF NOT EXISTS admin_tasks (
   task_id TEXT PRIMARY KEY,
@@ -182,8 +181,6 @@ CREATE TABLE IF NOT EXISTS admin_task_thread_messages (
   attachments TEXT,
   FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
 );
-=======
->>>>>>> 0927858 (added fixes and extensions)
 `);
 // Export our file-based database implementation
 module.exports = db;

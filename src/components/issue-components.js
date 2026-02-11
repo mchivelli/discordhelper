@@ -50,10 +50,12 @@ function issueActionRow(issueId, status, messageId) {
   );
 }
 
-function createIssueDetailsModal(issueId, messageId) {
+function createIssueDetailsModal(issueId, messageId, existingDetails) {
   const modal = new ModalBuilder()
     .setCustomId(`issue_details_${issueId}${messageId ? '_' + messageId : ''}`)
-    .setTitle('Provide Issue Details');
+    .setTitle(existingDetails ? 'Edit Issue Details' : 'Provide Issue Details');
+
+  const d = existingDetails || {};
 
   const steps = new TextInputBuilder()
     .setCustomId('steps')
@@ -62,6 +64,7 @@ function createIssueDetailsModal(issueId, messageId) {
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(false)
     .setMaxLength(1000);
+  if (d.steps) steps.setValue(d.steps);
 
   const expected = new TextInputBuilder()
     .setCustomId('expected')
@@ -70,6 +73,7 @@ function createIssueDetailsModal(issueId, messageId) {
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(false)
     .setMaxLength(500);
+  if (d.expected) expected.setValue(d.expected);
 
   const actual = new TextInputBuilder()
     .setCustomId('actual')
@@ -78,6 +82,7 @@ function createIssueDetailsModal(issueId, messageId) {
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(false)
     .setMaxLength(500);
+  if (d.actual) actual.setValue(d.actual);
 
   const extra = new TextInputBuilder()
     .setCustomId('extra')
@@ -86,6 +91,7 @@ function createIssueDetailsModal(issueId, messageId) {
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(false)
     .setMaxLength(1000);
+  if (d.extra) extra.setValue(d.extra);
 
   modal.addComponents(
     new ActionRowBuilder().addComponents(steps),
@@ -126,10 +132,35 @@ function buildIssueEmbed(issue, reporterUser) {
   return embed;
 }
 
+function buildDetailsEmbed(issue, detailsObj, user) {
+  const d = detailsObj || {};
+  const embed = new EmbedBuilder()
+    .setTitle(`Details: ${issue.title}`)
+    .setColor(COLORS.BLUE)
+    .setFooter({ text: `Issue ID: ${issue.id}` })
+    .setTimestamp();
+
+  if (user) {
+    embed.setAuthor({ name: `Updated by ${user.username}`, iconURL: user.displayAvatarURL?.() });
+  }
+
+  if (d.steps) embed.addFields({ name: 'Steps to Reproduce', value: d.steps.substring(0, 1024) });
+  if (d.expected) embed.addFields({ name: 'Expected Behavior', value: d.expected.substring(0, 1024) });
+  if (d.actual) embed.addFields({ name: 'Actual Behavior', value: d.actual.substring(0, 1024) });
+  if (d.extra) embed.addFields({ name: 'Additional Context', value: d.extra.substring(0, 1024) });
+
+  if (!d.steps && !d.expected && !d.actual && !d.extra) {
+    embed.setDescription('No details provided yet.');
+  }
+
+  return embed;
+}
+
 module.exports = {
   issueActionRow,
   createIssueDetailsModal,
   buildIssueEmbed,
+  buildDetailsEmbed,
   getStatusMeta,
   getSeverityLabel
 };

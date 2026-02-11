@@ -176,6 +176,15 @@ module.exports = {
         embed.addFields([{ name: 'Evidence', value: detailsText.substring(0, 1024) }]);
       }
 
+      // Direct quotes from messages
+      if (result.quotes && result.quotes.length > 0) {
+        const quotesText = result.quotes
+          .slice(0, 3)
+          .map(q => `> ${q}`)
+          .join('\n');
+        embed.addFields([{ name: 'Quotes', value: quotesText.substring(0, 1024) }]);
+      }
+
       embed.setFooter({ text: `${result.modelUsed} | ${result.tokensUsed} tokens | ${result.coveragePct ?? '?'}% coverage` });
       embed.setTimestamp();
 
