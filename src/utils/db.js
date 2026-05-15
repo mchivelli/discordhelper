@@ -1,22 +1,20 @@
-// Database layer using better-sqlite3
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+// Database layer.
+//
+// We use the file-based JSON storage shim (file-db.js) because production
+// deliberately avoids native modules (no better-sqlite3 build chain inside
+// the container). The shim exposes a SQLite-like API: db.prepare(sql)
+// returns an object with .get/.all/.run methods.
+//
+// New tables (message_chunks, sync_state, mod_flags, mod_reports,
+// unanswered_questions) are registered in file-db.js. Embeddings (BLOBs)
+// are stored separately as .bin files via embedding-store.js because JSON
+// is not suitable for Float32Array data.
+//
+// The CREATE TABLE strings below are kept for documentation; file-db's
+// exec() is a no-op that just logs them.
+const db = require('./file-db');
 
-// Database path
-const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'bot.db');
-
-// Ensure data directory exists
-const dbDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
-
-// Create/open database
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-
-// Create all tables (existing + new)
+// Document the schema (no-op at runtime; file-db uses its hardcoded table list)
 db.exec(`
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
@@ -122,104 +120,32 @@ CREATE TABLE IF NOT EXISTS issues (
   updated_at INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS admin_tasks (
-  task_id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'in_progress',
-  creator_id TEXT NOT NULL,
-  thread_id TEXT NOT NULL,
-  channel_id TEXT NOT NULL,
-  message_id TEXT,
-  guild_id TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS admin_task_assignees (
-  task_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  PRIMARY KEY(task_id, user_id),
-  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS simple_tasks (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  assignee_ids TEXT DEFAULT '[]',
-  creator_id TEXT NOT NULL,
-  guild_id TEXT NOT NULL,
-  status TEXT DEFAULT 'pending',
-  completed_at INTEGER,
-  created_at INTEGER NOT NULL,
-  message_id TEXT,
-  channel_id TEXT
-);
-
-CREATE TABLE IF NOT EXISTS changelog_versions (
-  version TEXT PRIMARY KEY,
-  thread_id TEXT NOT NULL,
-  channel_id TEXT NOT NULL,
-  guild_id TEXT NOT NULL,
-  status TEXT DEFAULT 'open',
-  is_current INTEGER DEFAULT 0,
-  created_by TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  completed_at INTEGER,
-  completion_report TEXT
-);
-
-CREATE TABLE IF NOT EXISTS changelog_entries (
-  id TEXT PRIMARY KEY,
-  version TEXT NOT NULL,
-  entry_type TEXT NOT NULL,
-  entry_text TEXT NOT NULL,
-  task_id TEXT,
-  author_id TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY(version) REFERENCES changelog_versions(version) ON DELETE CASCADE,
-  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE SET NULL
-);
-
-CREATE TABLE IF NOT EXISTS admin_task_thread_messages (
-  message_id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL,
-  thread_id TEXT NOT NULL,
-  author_id TEXT NOT NULL,
-  author_tag TEXT NOT NULL,
-  content TEXT NOT NULL,
-  timestamp INTEGER NOT NULL,
-  attachments TEXT,
-  FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
-);
-
 -- NEW TABLES for vector/mod features
--- Note: the next commit (file-db refactor) will rewrite this file to use the
--- JSON-file shim, where all PKs are TEXT and embeddings live in
--- data/embeddings/<id>.bin. The CREATE TABLE strings below become docstrings.
+-- Note: in file-db storage, all PKs are TEXT. Embeddings are stored as
+-- raw .bin files under data/embeddings/<id>.bin (see embedding-store.js)
+-- because JSON cannot efficiently round-trip Float32Array data.
 
 CREATE TABLE IF NOT EXISTS message_chunks (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY,           -- guild-channel-startTs composite
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   start_ts INTEGER NOT NULL,
   end_ts INTEGER NOT NULL,
   combined_text TEXT NOT NULL,
-  embedding BLOB,
   message_count INTEGER NOT NULL,
   created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (
+  id TEXT PRIMARY KEY,           -- synthesized as guildId_channelId
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   last_message_id TEXT,
-  last_sync_ts INTEGER,
-  PRIMARY KEY (guild_id, channel_id)
+  last_sync_ts INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS mod_reports (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT PRIMARY KEY,           -- UUID
   guild_id TEXT NOT NULL,
   channel_id TEXT,
   message_id TEXT,
@@ -234,12 +160,12 @@ CREATE TABLE IF NOT EXISTS mod_reports (
   status TEXT DEFAULT 'open',
   resolution TEXT,
   resolved_by TEXT,
-  created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+  created_at INTEGER,
   resolved_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS mod_flags (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT PRIMARY KEY,           -- UUID
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -249,16 +175,13 @@ CREATE TABLE IF NOT EXISTS mod_flags (
   classification TEXT NOT NULL,
   confidence REAL,
   details TEXT,
-  context_before TEXT,
-  context_after TEXT,
-  alert_sent INTEGER DEFAULT 0,
   dismissed INTEGER DEFAULT 0,
   action_taken TEXT,
-  created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+  created_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS unanswered_questions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT PRIMARY KEY,           -- UUID
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -267,9 +190,8 @@ CREATE TABLE IF NOT EXISTS unanswered_questions (
   content TEXT NOT NULL,
   question_type TEXT,
   confidence REAL,
-  detected_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+  detected_at INTEGER,
   resolved INTEGER DEFAULT 0,
-  resolved_at INTEGER,
   digest_sent INTEGER DEFAULT 0
 );
 

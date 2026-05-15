@@ -85,8 +85,10 @@ function cosineSimilarity(a, b) {
 function searchSimilarChunks(db, queryEmbedding, guildId, filters = {}) {
   const { channelId, startTs, endTs, topK = 10 } = filters;
 
+  // Embeddings are stored separately as .bin files (see embedding-store.js).
+  // The DB row carries only metadata; we fetch the embedding by chunk id.
   let sql = `
-    SELECT id, channel_id, start_ts, end_ts, combined_text, embedding, message_count
+    SELECT id, channel_id, start_ts, end_ts, combined_text, message_count
     FROM message_chunks
     WHERE guild_id = ?
   `;
@@ -110,21 +112,14 @@ function searchSimilarChunks(db, queryEmbedding, guildId, filters = {}) {
   const stmt = db.prepare(sql);
   const rows = stmt.all(...params);
 
-  // Compute similarity for each row
+  // Compute similarity for each row whose embedding file still exists.
   const results = rows.map(row => {
-    let embedding;
-    try {
-      // Safely construct Float32Array from Node Buffer (which may be a slice of a pooled ArrayBuffer)
-      embedding = new Float32Array(
-        row.embedding.buffer,
-        row.embedding.byteOffset,
-        row.embedding.byteLength / 4
-      );
-    } catch (e) {
-      console.error('Failed to deserialize embedding:', e);
+    const embedding = embeddingStore.readEmbedding(row.id);
+    if (!embedding) {
+      // Row has no companion .bin file (e.g. partial deletion or pre-migration row).
+      // Skip rather than poison the ranking.
       return null;
     }
-
     const similarity = cosineSimilarity(queryEmbedding, embedding);
     return {
       id: row.id,
@@ -198,10 +193,12 @@ async function processAndStoreChunks(db, guildId, channelId, newMessages) {
     affectedWindowKeys.add(Math.floor(msg.timestamp / chunkWindowMs));
   }
 
+  // Schema note: embedding is NOT stored in this row — it lives in
+  // data/embeddings/<id>.bin. INSERT takes 8 positional args.
   const insertStmt = db.prepare(`
     INSERT OR REPLACE INTO message_chunks
-    (id, guild_id, channel_id, start_ts, end_ts, combined_text, embedding, message_count, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, guild_id, channel_id, start_ts, end_ts, combined_text, message_count, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const getExisting = db.prepare(`
@@ -209,9 +206,13 @@ async function processAndStoreChunks(db, guildId, channelId, newMessages) {
     WHERE guild_id = ? AND channel_id = ? AND start_ts = ?
   `);
 
+  // Note on parameter order: file-db.js's chat_messages handler consumes
+  // params in a fixed order (guild_id, timestamp >=, timestamp <, channel_id),
+  // not SQL declaration order. We arrange this query and its args to match.
+  // We also use `<` strict so end_ts is exclusive (chunk windows are half-open).
   const getWindowMessages = db.prepare(`
     SELECT username, content, timestamp FROM chat_messages
-    WHERE guild_id = ? AND channel_id = ? AND timestamp >= ? AND timestamp < ?
+    WHERE guild_id = ? AND timestamp >= ? AND timestamp < ? AND channel_id = ?
     ORDER BY timestamp ASC
   `);
 
@@ -223,7 +224,7 @@ async function processAndStoreChunks(db, guildId, channelId, newMessages) {
     const start_ts = windowKey * chunkWindowMs;
     const end_ts = start_ts + chunkWindowMs;
 
-    const windowMessages = getWindowMessages.all(guildId, channelId, start_ts, end_ts);
+    const windowMessages = getWindowMessages.all(guildId, start_ts, end_ts, channelId);
     if (windowMessages.length === 0) continue;
 
     const existing = getExisting.get(guildId, channelId, start_ts);
@@ -244,8 +245,16 @@ async function processAndStoreChunks(db, guildId, channelId, newMessages) {
       continue;
     }
 
-    const embeddingBuffer = Buffer.from(embedding.buffer);
     const chunkId = `${guildId}-${channelId}-${start_ts}`;
+
+    // Persist embedding to disk first; if the row insert later fails, the
+    // orphan .bin will simply not be referenced by any row.
+    try {
+      embeddingStore.writeEmbedding(chunkId, embedding);
+    } catch (e) {
+      console.error('Failed to persist embedding for chunk:', chunkId, e);
+      continue;
+    }
 
     insertStmt.run(
       chunkId,
@@ -254,7 +263,6 @@ async function processAndStoreChunks(db, guildId, channelId, newMessages) {
       start_ts,
       end_ts,
       combined_text,
-      embeddingBuffer,
       windowMessages.length,
       Date.now()
     );

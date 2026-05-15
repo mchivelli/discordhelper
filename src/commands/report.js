@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const crypto = require('crypto');
 const { categorizeReport } = require('../utils/mod-ai');
 const db = require('../utils/db');
 const logger = require('../utils/logger');
@@ -44,12 +45,14 @@ module.exports = {
       // Categorize the report
       const categorization = await categorizeReport(reason, evidence);
 
-      // Store report in database
-      const reportId = db.prepare(`
+      // Store report in database. id is a UUID (file-db uses TEXT PKs).
+      const reportId = crypto.randomUUID();
+      db.prepare(`
         INSERT INTO mod_reports
-        (guild_id, channel_id, message_id, reporter_id, reported_user_id, content, reason, evidence, category, priority, summary)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, guild_id, channel_id, message_id, reporter_id, reported_user_id, content, reason, evidence, category, priority, summary)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
+        reportId,
         guildId,
         channelId,
         messageId,
@@ -61,7 +64,7 @@ module.exports = {
         categorization.category,
         categorization.priority,
         categorization.summary
-      ).lastInsertRowid;
+      );
 
       // Create embed for moderators
       const modEmbed = new EmbedBuilder()

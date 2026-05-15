@@ -1,4 +1,4 @@
-/**
+﻿/**
  * File-based database replacement for better-sqlite3
  * Uses JSON files for storage to avoid native module issues
  */
@@ -30,7 +30,13 @@ const TABLES = {
   simple_tasks: path.join(DB_ROOT, 'simple_tasks'),
   changelog_versions: path.join(DB_ROOT, 'changelog_versions'),
   changelog_entries: path.join(DB_ROOT, 'changelog_entries'),
-  admin_task_thread_messages: path.join(DB_ROOT, 'admin_task_thread_messages')
+  admin_task_thread_messages: path.join(DB_ROOT, 'admin_task_thread_messages'),
+  // Semantic search + moderation (added by cascade/semantic-search-mod-ai)
+  message_chunks: path.join(DB_ROOT, 'message_chunks'),
+  sync_state: path.join(DB_ROOT, 'sync_state'),
+  mod_flags: path.join(DB_ROOT, 'mod_flags'),
+  mod_reports: path.join(DB_ROOT, 'mod_reports'),
+  unanswered_questions: path.join(DB_ROOT, 'unanswered_questions')
 };
 
 // Ensure all table directories exist
@@ -52,7 +58,13 @@ const cache = {
   simple_tasks: new Map(),
   changelog_versions: new Map(),
   changelog_entries: new Map(),
-  admin_task_thread_messages: new Map()
+  admin_task_thread_messages: new Map(),
+  // Semantic search + moderation
+  message_chunks: new Map(),
+  sync_state: new Map(),
+  mod_flags: new Map(),
+  mod_reports: new Map(),
+  unanswered_questions: new Map()
 };
 
 /**
@@ -151,18 +163,21 @@ class QueryBuilder {
   
   /**
    * Get a single item by ID or execute a query
-   * @param {string} id - ID of the item to get or query parameter
+   * @param {...*} params - Query parameters
    * @returns {Object|null} - The item, or null if not found
    */
-  get(id) {
-    // Handle COUNT queries
-    if (this.query && this.query.toLowerCase().includes('count')) {
-      return this.executeCountQuery(id);
+  get(...params) {
+    const id = params[0];
+    // Handle COUNT queries. Match the SQL function call `count(` rather than
+    // the bare word `count`, otherwise queries that reference a column named
+    // *count* (e.g. `SELECT message_count FROM ...`) are misrouted here.
+    if (this.query && this.query.toLowerCase().includes('count(')) {
+      return this.executeCountQuery(...params);
     }
-    
+
     // Handle regular SELECT queries with WHERE clauses
     if (this.query && this.query.toLowerCase().includes('where')) {
-      return this.executeSelectQuery(id);
+      return this.executeSelectQuery(...params);
     }
     
     // Check cache first for simple ID lookups
@@ -192,9 +207,21 @@ class QueryBuilder {
    * @param {string} param - Query parameter
    * @returns {Object} - Object with count property
    */
-  executeCountQuery(param) {
+  executeCountQuery(...params) {
     const items = loadTable(this.tableName);
-    
+    const q = this.query ? this.query.toLowerCase() : '';
+    const param = params[0];
+
+    // Multi-param COUNT(*) WHERE guild_id = ? AND channel_id = ?
+    // Used by /sync status for chat_messages and message_chunks counts.
+    if (q.includes('where') && q.includes('guild_id') && q.includes('channel_id') && params.length >= 2) {
+      const guildId = params[0];
+      const channelId = params[1];
+      return {
+        count: items.filter(item => item.guild_id === guildId && item.channel_id === channelId).length
+      };
+    }
+
     // Handle COUNT(*) with WHERE clause
     if (param && this.query.toLowerCase().includes('where')) {
       let count = 0;
@@ -239,7 +266,35 @@ class QueryBuilder {
    */
   executeSelectQuery(...params) {
     const items = loadTable(this.tableName);
-    
+
+    // sync_state .get(guildId, channelId) lookup (composite PK)
+    if (this.tableName === 'sync_state') {
+      const q = this.query.toLowerCase();
+      if (q.includes('where guild_id =') && q.includes('and channel_id =')) {
+        const guildId = params[0];
+        const channelId = params[1];
+        return items.find(item =>
+          item.guild_id === guildId && item.channel_id === channelId
+        ) || null;
+      }
+    }
+
+    // message_chunks .get(guildId, channelId, start_ts) used to check if a 15-min
+    // window has already been embedded.
+    if (this.tableName === 'message_chunks') {
+      const q = this.query.toLowerCase();
+      if (q.includes('where guild_id =') && q.includes('channel_id =') && q.includes('start_ts =')) {
+        const guildId = params[0];
+        const channelId = params[1];
+        const startTs = params[2];
+        return items.find(item =>
+          item.guild_id === guildId &&
+          item.channel_id === channelId &&
+          item.start_ts === startTs
+        ) || null;
+      }
+    }
+
     // Handle changelog_versions queries
     if (this.tableName === 'changelog_versions') {
       if (this.query.toLowerCase().includes('where version =')) {
@@ -355,7 +410,11 @@ class QueryBuilder {
           const endTs = params[idx++];
           filtered = filtered.filter(item => (item.timestamp || 0) <= endTs);
         }
-        // content LIKE filters (keyword search — supports multiple OR'd clauses)
+        if (q.includes('timestamp < ?')) {
+          const endTs = params[idx++];
+          filtered = filtered.filter(item => (item.timestamp || 0) < endTs);
+        }
+        // content LIKE filters (keyword search ÔÇö supports multiple OR'd clauses)
         const likeCount = (q.match(/content like \?/g) || []).length;
         if (likeCount > 0) {
           const likePatterns = [];
@@ -428,6 +487,57 @@ class QueryBuilder {
         }
         
         console.log(`DEBUG: all() - chat_summaries filtered count:`, filtered.length);
+        return filtered;
+      }
+
+      // mod_flags listing: SELECT * FROM mod_flags WHERE guild_id = ? AND dismissed = 0
+      //                    ORDER BY created_at DESC LIMIT ?
+      if (this.tableName === 'mod_flags') {
+        const q = this.query.toLowerCase();
+        let idx = 0;
+        let filtered = items;
+
+        if (q.includes('guild_id =')) {
+          filtered = filtered.filter(item => item.guild_id === params[idx++]);
+        }
+        if (q.includes('dismissed = 0')) {
+          filtered = filtered.filter(item =>
+            item.dismissed === 0 || item.dismissed === false || item.dismissed == null
+          );
+        }
+        if (q.includes('order by created_at desc')) {
+          filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+        } else if (q.includes('order by created_at asc')) {
+          filtered.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+        }
+        if (q.includes('limit ?')) {
+          const limit = params[params.length - 1];
+          filtered = filtered.slice(0, typeof limit === 'number' ? limit : 0);
+        }
+        return filtered;
+      }
+
+      // message_chunks search: SELECT ... FROM message_chunks WHERE guild_id = ?
+      //                        [AND channel_id = ?] [AND start_ts >= ?] [AND end_ts <= ?]
+      if (this.tableName === 'message_chunks') {
+        const q = this.query.toLowerCase();
+        let idx = 0;
+        let filtered = items;
+
+        if (q.includes('guild_id =')) {
+          filtered = filtered.filter(item => item.guild_id === params[idx++]);
+        }
+        if (q.includes('channel_id =')) {
+          filtered = filtered.filter(item => item.channel_id === params[idx++]);
+        }
+        if (q.includes('start_ts >=')) {
+          const startTs = params[idx++];
+          filtered = filtered.filter(item => (item.start_ts || 0) >= startTs);
+        }
+        if (q.includes('end_ts <=')) {
+          const endTs = params[idx++];
+          filtered = filtered.filter(item => (item.end_ts || 0) <= endTs);
+        }
         return filtered;
       }
 
@@ -782,6 +892,95 @@ class QueryBuilder {
             };
           }
           break;
+        case 'message_chunks':
+          // Positional: id, guild_id, channel_id, start_ts, end_ts, combined_text, message_count, created_at
+          // (embedding stored separately as data/embeddings/<id>.bin)
+          if (args.length >= 7) {
+            item = {
+              id: args[0],
+              guild_id: args[1],
+              channel_id: args[2],
+              start_ts: args[3],
+              end_ts: args[4],
+              combined_text: args[5],
+              message_count: args[6],
+              created_at: args[7] || Date.now()
+            };
+          }
+          break;
+        case 'sync_state':
+          // Positional: guild_id, channel_id, last_message_id, last_sync_ts
+          // Composite PK -> synthesize id
+          if (args.length >= 4) {
+            item = {
+              id: `${args[0]}_${args[1]}`,
+              guild_id: args[0],
+              channel_id: args[1],
+              last_message_id: args[2],
+              last_sync_ts: args[3]
+            };
+          }
+          break;
+        case 'mod_flags':
+          // Positional: id (UUID, generated by caller), guild_id, channel_id, message_id, user_id, username, content, classification, confidence, details
+          if (args.length >= 10) {
+            item = {
+              id: args[0],
+              guild_id: args[1],
+              channel_id: args[2],
+              message_id: args[3],
+              user_id: args[4],
+              username: args[5],
+              content: args[6],
+              classification: args[7],
+              confidence: args[8],
+              details: args[9],
+              dismissed: 0,
+              action_taken: null,
+              created_at: Date.now()
+            };
+          }
+          break;
+        case 'mod_reports':
+          // Positional: id (UUID), guild_id, channel_id, message_id, reporter_id, reported_user_id, content, reason, evidence, category, priority, summary
+          if (args.length >= 12) {
+            item = {
+              id: args[0],
+              guild_id: args[1],
+              channel_id: args[2],
+              message_id: args[3],
+              reporter_id: args[4],
+              reported_user_id: args[5],
+              content: args[6],
+              reason: args[7],
+              evidence: args[8],
+              category: args[9],
+              priority: args[10],
+              summary: args[11],
+              status: 'open',
+              created_at: Date.now()
+            };
+          }
+          break;
+        case 'unanswered_questions':
+          // Positional: id (UUID), guild_id, channel_id, message_id, user_id, username, content, question_type, confidence
+          if (args.length >= 9) {
+            item = {
+              id: args[0],
+              guild_id: args[1],
+              channel_id: args[2],
+              message_id: args[3],
+              user_id: args[4],
+              username: args[5],
+              content: args[6],
+              question_type: args[7],
+              confidence: args[8],
+              detected_at: Date.now(),
+              resolved: 0,
+              digest_sent: 0
+            };
+          }
+          break;
       }
     }
     
@@ -791,7 +990,11 @@ class QueryBuilder {
     // Return a result object similar to SQLite
     return {
       changes: 1,
-      lastInsertRowid: this.tableName === 'task_suggestions' ? savedItem.id : null
+      // task_suggestions used the inserted id; mod_reports also wants its UUID for the embed
+      lastInsertRowid:
+        this.tableName === 'task_suggestions' || this.tableName === 'mod_reports'
+          ? savedItem.id
+          : null
     };
   }
   
@@ -907,6 +1110,22 @@ class QueryBuilder {
       }
     }
     
+    // mod_flags dismiss: UPDATE mod_flags SET dismissed = 1, action_taken = 'Dismissed by moderator' WHERE id = ?
+    if (this.tableName === 'mod_flags') {
+      const q = this.query.toLowerCase();
+      if (q.includes('set dismissed') && q.includes('where id =')) {
+        const id = args[0];
+        const flag = items.find(i => i.id === id);
+        if (flag && (flag.dismissed === 0 || flag.dismissed == null)) {
+          flag.dismissed = 1;
+          flag.action_taken = 'Dismissed by moderator';
+          saveItem(this.tableName, flag);
+          updatedCount = 1;
+        }
+        return { changes: updatedCount };
+      }
+    }
+
     // Parse UPDATE queries based on common patterns
     if (this.tableName === 'issues') {
       const idArgIndex = (this.query.toLowerCase().includes('where id =')) ? -1 : null;
@@ -1161,6 +1380,16 @@ const db = {
     const builder = new QueryBuilder(tableName);
     builder.query = query; // Store the query for processing
     return builder;
+  },
+
+  /**
+   * Transaction shim. better-sqlite3 returns a function that runs the supplied
+   * callback inside a SQLite transaction. file-db has no transactions (one JSON
+   * file per row), so we just return a function that invokes the callback as-is.
+   * Each saveItem already writes atomically per-row.
+   */
+  transaction: (fn) => {
+    return (...args) => fn(...args);
   }
 };
 
