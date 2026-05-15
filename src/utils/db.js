@@ -1,13 +1,22 @@
-// Database layer using file-based JSON storage to avoid native module issues
-// This replaces better-sqlite3 with a file-based solution that works across all Node.js versions
-const fs = require('fs-extra');
+// Database layer using better-sqlite3
+const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-// Import our file-based database implementation
-const db = require('./file-db');
+// Database path
+const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'bot.db');
 
-// Execute these statements as a no-op to maintain compatibility
-// with existing code expecting these tables to be set up
+// Ensure data directory exists
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
+
+// Create/open database
+const db = new Database(DB_PATH);
+db.pragma('journal_mode = WAL');
+
+// Create all tables (existing + new)
 db.exec(`
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
@@ -19,6 +28,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   guild_id TEXT,
   creator_id TEXT
 );
+
 CREATE TABLE IF NOT EXISTS stages (
   task_id TEXT NOT NULL,
   idx INTEGER NOT NULL,
@@ -47,6 +57,7 @@ CREATE TABLE IF NOT EXISTS bot_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
 CREATE TABLE IF NOT EXISTS announcements (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -181,6 +192,96 @@ CREATE TABLE IF NOT EXISTS admin_task_thread_messages (
   attachments TEXT,
   FOREIGN KEY(task_id) REFERENCES admin_tasks(task_id) ON DELETE CASCADE
 );
+
+-- NEW TABLES for vector/mod features
+-- Note: the next commit (file-db refactor) will rewrite this file to use the
+-- JSON-file shim, where all PKs are TEXT and embeddings live in
+-- data/embeddings/<id>.bin. The CREATE TABLE strings below become docstrings.
+
+CREATE TABLE IF NOT EXISTS message_chunks (
+  id TEXT PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  start_ts INTEGER NOT NULL,
+  end_ts INTEGER NOT NULL,
+  combined_text TEXT NOT NULL,
+  embedding BLOB,
+  message_count INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  last_message_id TEXT,
+  last_sync_ts INTEGER,
+  PRIMARY KEY (guild_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS mod_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT,
+  message_id TEXT,
+  reporter_id TEXT NOT NULL,
+  reported_user_id TEXT,
+  content TEXT,
+  reason TEXT NOT NULL,
+  evidence TEXT,
+  category TEXT,
+  priority TEXT DEFAULT 'medium',
+  summary TEXT,
+  status TEXT DEFAULT 'open',
+  resolution TEXT,
+  resolved_by TEXT,
+  created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+  resolved_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS mod_flags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  username TEXT,
+  content TEXT,
+  classification TEXT NOT NULL,
+  confidence REAL,
+  details TEXT,
+  context_before TEXT,
+  context_after TEXT,
+  alert_sent INTEGER DEFAULT 0,
+  dismissed INTEGER DEFAULT 0,
+  action_taken TEXT,
+  created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+);
+
+CREATE TABLE IF NOT EXISTS unanswered_questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  username TEXT,
+  content TEXT NOT NULL,
+  question_type TEXT,
+  confidence REAL,
+  detected_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+  resolved INTEGER DEFAULT 0,
+  resolved_at INTEGER,
+  digest_sent INTEGER DEFAULT 0
+);
+
+-- INDEXES for performance
+CREATE INDEX IF NOT EXISTS idx_chat_messages_guild_channel_ts ON chat_messages(guild_id, channel_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_guild_ts ON chat_messages(guild_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(guild_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_message_chunks_guild_channel ON message_chunks(guild_id, channel_id, start_ts);
+CREATE INDEX IF NOT EXISTS idx_mod_flags_guild ON mod_flags(guild_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mod_reports_guild ON mod_reports(guild_id, status);
+CREATE INDEX IF NOT EXISTS idx_unanswered_guild ON unanswered_questions(guild_id, resolved);
+CREATE INDEX IF NOT EXISTS idx_summaries_guild_date ON chat_summaries(guild_id, date);
 `);
-// Export our file-based database implementation
+
 module.exports = db;

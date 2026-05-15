@@ -25,6 +25,14 @@ console.log('Loading AI utilities...');
 const { getPrereqs, storeChatMessage, generateChatSummary, getRecentMessages, getMessagesByDateRange, getMessageCountSince, getPreviousDayMessages, getMessagesFromSourceChannels, getPreviousDaySummary, saveChatSummary, getExistingSummaries } = require('./utils/ai');
 console.log('AI utilities loaded');
 
+console.log('Loading sync utilities...');
+const { runDailySync } = require('./utils/sync');
+console.log('Sync utilities loaded');
+
+console.log('Loading moderator AI utilities...');
+const { classifyToxicity, detectQuestion, shouldFlagToxicity } = require('./utils/mod-ai');
+console.log('Moderator AI utilities loaded');
+
 console.log('Loading patch utilities...');
 const { generatePatchAnnouncement, postChangelogEntry } = require('./utils/patch-utils');
 console.log('Patch utilities loaded');
@@ -316,6 +324,20 @@ client.on(Events.ClientReady, () => {
     }
   } else {
     logger.warn('Message cleanup disabled (MESSAGE_RETENTION_DAYS=0 or no cron expression)');
+  }
+
+  // Set up daily channel sync
+  cron.schedule(process.env.SYNC_CRON || '0 3 * * *', async () => {
+    logger.info('Starting daily channel sync...');
+    await runDailySync(client, db);
+    logger.info('Daily channel sync completed');
+  });
+
+  // First-run backfill check
+  const hasState = db.prepare('SELECT COUNT(*) as count FROM sync_state').get();
+  if (!hasState || hasState.count === 0) {
+    logger.info('No sync state found — starting first-run backfill...');
+    setTimeout(() => runDailySync(client, db), 10000); // delay 10s after ready
   }
 
   logger.info('✅ Bot is ready to handle interactions - Chat summarization is active!');
@@ -2746,6 +2768,81 @@ client.on(Events.MessageCreate, async message => {
   if (!archivedToAdminTask && !isChangelogThread && !message.author.bot) {
     try {
       storeChatMessage(db, message);
+
+      // --- Cheap pre-filters to avoid burning tokens on trivial messages ---
+      const content = (message.content || '').trim();
+      const contentLen = content.length;
+
+      // Min-length gate: messages under N chars are almost never actionable for either detector.
+      // Default 20 chars (~3-4 short words). Tunable via env.
+      const MOD_MIN_LEN = parseInt(process.env.MOD_MIN_LENGTH || '20', 10);
+
+      // Channel allowlists (empty/unset = analyse all readable channels).
+      function inAllowlist(envVar) {
+        const raw = (process.env[envVar] || '').trim();
+        if (!raw) return true; // unset = allow all
+        return raw.split(',').map(s => s.trim()).filter(Boolean).includes(message.channel.id);
+      }
+
+      // Regex heuristic: is this plausibly a question? (? mark, or starts with question word)
+      const questionWordRe = /^(who|what|when|where|why|how|does|do|did|is|are|was|were|can|could|would|should|will|which|may|might)\b/i;
+      const looksLikeQuestion = content.includes('?') || questionWordRe.test(content);
+
+      // Toxicity detection (async, non-blocking)
+      if (
+        process.env.ENABLE_TOXICITY_DETECTION !== 'false'
+        && contentLen >= MOD_MIN_LEN
+        && inAllowlist('MOD_CHANNEL_IDS')
+      ) {
+        classifyToxicity(content).then(classification => {
+          if (shouldFlagToxicity(classification.classification, classification.confidence)) {
+            db.prepare(`
+              INSERT INTO mod_flags
+              (guild_id, channel_id, message_id, user_id, username, content, classification, confidence, details)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              message.guild.id,
+              message.channel.id,
+              message.id,
+              message.author.id,
+              message.author.tag,
+              content,
+              classification.classification,
+              classification.confidence,
+              classification.details
+            );
+            logger.info(`Toxicity flagged for user ${message.author.tag}: ${classification.classification}`);
+          }
+        }).catch(err => logger.error('Error in toxicity detection:', err));
+      }
+
+      // Question detection (async, non-blocking)
+      if (
+        process.env.ENABLE_QUESTION_DETECTION !== 'false'
+        && contentLen >= MOD_MIN_LEN
+        && looksLikeQuestion
+        && inAllowlist('QUESTION_CHANNEL_IDS')
+      ) {
+        detectQuestion(content).then(detection => {
+          if (detection.isQuestion && detection.confidence > 0.7) {
+            db.prepare(`
+              INSERT INTO unanswered_questions
+              (guild_id, channel_id, message_id, user_id, username, content, question_type, confidence)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              message.guild.id,
+              message.channel.id,
+              message.id,
+              message.author.id,
+              message.author.tag,
+              content,
+              detection.type,
+              detection.confidence
+            );
+            logger.info(`Question detected from ${message.author.tag}: ${detection.type}`);
+          }
+        }).catch(err => logger.error('Error in question detection:', err));
+      }
     } catch (error) {
       logger.error('Error storing message for chat summary:', error);
     }

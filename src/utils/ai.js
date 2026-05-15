@@ -1,118 +1,30 @@
 require('dotenv').config();
-const API_KEY = process.env.OPENROUTER_API_KEY;
 const logger = require('./logger');
+const { callLLM, callLLMFast, callLLMSmart } = require('./llm');
+
+// Backward-compatible wrapper matching the old callLLMAPI(messages, maxTokens, modelOverride, throwOnError) signature
+async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throwOnError = false) {
+  return callLLM(messages, { maxTokens, model: modelOverride || undefined, throwOnError });
+}
 
 // AI models configuration
-const MODEL = process.env.MODEL_NAME || 'google/gemini-2.5-pro-exp-03-25';
-// Prefer a strong, inexpensive summarization model by default. Can be overridden via env.
-const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || 'google/gemini-1.5-flash';
+const SUMMARIZATION_MODEL = process.env.SUMMARIZATION_MODEL || process.env.CLAUDE_FAST_MODEL || 'claude-haiku-4-20250414';
 const SUMMARY_MAX_MESSAGES = parseInt(process.env.SUMMARY_MAX_MESSAGES || '300', 10);
 const SUMMARY_TOKEN_BUDGET = parseInt(process.env.SUMMARY_TOKEN_BUDGET || '6000', 10); // approximate input budget
 const SUMMARY_CHUNK_SIZE = parseInt(process.env.SUMMARY_CHUNK_SIZE || '250', 10);
 const SUMMARY_MAX_CHUNKS = parseInt(process.env.SUMMARY_MAX_CHUNKS || '8', 10);
 // Allow longer per-message content so the model can capture nuance
 const SUMMARY_PER_MESSAGE_CHAR_LIMIT = parseInt(process.env.SUMMARY_PER_MESSAGE_CHAR_LIMIT || '400', 10);
-const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 // Ask command configuration
 const ASK_TOKEN_BUDGET = parseInt(process.env.ASK_TOKEN_BUDGET || '8000', 10);
 const ASK_MAX_RESPONSE_TOKENS = parseInt(process.env.ASK_MAX_RESPONSE_TOKENS || '1000', 10);
 const ASK_MODEL = process.env.ASK_MODEL || SUMMARIZATION_MODEL;
 
-// Helper function to make API requests to the LLM
-async function callLLMAPI(messages, maxTokens = 200, modelOverride = null, throwOnError = false) {
-  // Discord-optimized fallback responses if API call fails or is not configured
-  const fallbackResponses = {
-    'getPrereqs': 'Make sure all previous stages are complete. Gather necessary resources and coordinate with team members.',
-    'enhanceAnnouncement': messages[1]?.content?.replace('Please enhance this announcement: ', '') || 'Announcement content unavailable.',
-    'getSuggestions': [],
-    'generateTaskStages': [
-      { name: '📋 Planning', description: 'Define objectives and requirements for this Discord task.' },
-      { name: '🔧 Setup', description: 'Prepare necessary resources and configure initial environment.' },
-      { name: '⚙️ Implementation', description: 'Execute the main work required to complete the task.' },
-      { name: '🧪 Testing', description: 'Verify functionality and review results before finalizing.' },
-      { name: '🚀 Deployment', description: 'Release the completed work to the community.' }
-    ],
-    'enhanceTaskNote': messages[1]?.content?.replace('Stage: ', '').replace('\nCompletion Notes: ', '').split('\n\nPlease enhance')[0] || 'Completed successfully.',
-    'enhanceTaskDescription': messages[1]?.content?.replace('Task Name: ', '').replace('\nOriginal Description: ', '').split('\n\nPlease enhance')[0] || 'Task description unavailable.'
-  };
-
-  // Check if API key is configured
-  if (!API_KEY) {
-    console.warn('OpenRouter API key not configured. Using fallback responses.');
-    // Determine which function is calling based on message content
-    for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-      if (messages[0]?.content?.includes(funcName) ||
-        messages[1]?.content?.includes(funcName)) {
-        return fallback;
-      }
-    }
-    return fallbackResponses.getPrereqs; // Default fallback
-  }
-
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${API_KEY}`,
-        'HTTP-Referer': 'https://discord-task-bot.example.com',
-        'X-Title': 'Discord Task Management Bot'
-      },
-      body: JSON.stringify({
-        model: modelOverride || MODEL || 'google/gemini-2.5-pro-exp-03-25', // Use override model if provided
-        messages: messages,
-        max_tokens: maxTokens
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.error(`OpenRouter error: ${err}`);
-      if (throwOnError) {
-        throw new Error(err || 'LLM API error');
-      }
-      // Use fallback response based on function name
-      for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-        if (messages[0]?.content?.includes(funcName) ||
-          messages[1]?.content?.includes(funcName)) {
-          return fallback;
-        }
-      }
-      return fallbackResponses.getPrereqs; // Default fallback
-    }
-
-    const json = await res.json();
-    if (!json.choices?.length) {
-      console.error('No AI response');
-      // Use fallback response
-      for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-        if (messages[0]?.content?.includes(funcName) ||
-          messages[1]?.content?.includes(funcName)) {
-          return fallback;
-        }
-      }
-      return fallbackResponses.getPrereqs; // Default fallback
-    }
-
-    return json.choices[0].message.content;
-  } catch (error) {
-    console.error('Error calling AI API:', error);
-    // Use fallback response
-    for (const [funcName, fallback] of Object.entries(fallbackResponses)) {
-      if (messages[0]?.content?.includes(funcName) ||
-        messages[1]?.content?.includes(funcName)) {
-        return fallback;
-      }
-    }
-    return fallbackResponses.getPrereqs; // Default fallback
-  }
-}
-
 async function getPrereqs(taskName, stageName, desc) {
   const prompt = `Task: ${taskName}\nStage: ${stageName}\nDescription: ${desc}\nList the prerequisites and necessities succinctly.`;
 
-  return callLLMAPI([{ role: 'user', content: prompt }]);
+  return callLLMFast([{ role: 'user', content: prompt }]);
 }
 
 /**
@@ -309,7 +221,7 @@ async function enhanceTaskDescription(taskName, description) {
     }
   ];
 
-  return callLLMAPI(messages, 400);
+  return callLLMFast(messages, 400);
 }
 
 /**
@@ -366,7 +278,7 @@ async function generateFollowUpTasks(taskName, description, completedStages = []
  * @returns {Promise<{success: boolean, message: string}>} Status of AI services
  */
 async function checkAIStatus() {
-  if (!API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY) {
     return {
       success: false,
       message: "AI services not configured: API key missing. Using fallback responses."
@@ -375,7 +287,7 @@ async function checkAIStatus() {
 
   try {
     // Simple test call to verify API access
-    const result = await callLLMAPI([{
+    const result = await callLLMFast([{
       role: 'user',
       content: 'Reply with OK if you can read this message.'
     }], 50);
@@ -705,7 +617,7 @@ Avoid generic filler; be specific to this conversation.`;
 • Action Items (bullets with explicit owners)
 • Participant Highlights (who contributed and how)
 Keep it ~200-300 words, concise, specific, and easy to scan.`;
-    const finalResult = await callLLMAPI([{ role: 'user', content: synthesisPrompt }], 520, SUMMARIZATION_MODEL, true);
+    const finalResult = await callLLM([{ role: 'user', content: synthesisPrompt }], { maxTokens: 520, throwOnError: true });
     const finalText = (finalResult && typeof finalResult === 'string') ? finalResult : '';
     if (!finalText) throw new Error('Empty synthesis result');
     return { summary: finalText, modelUsed: SUMMARIZATION_MODEL, messagesUsed: windowed.length };

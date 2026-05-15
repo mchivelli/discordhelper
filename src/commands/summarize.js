@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField } = require('discord.js');
 const db = require('../utils/db');
 const { generateChatSummary, getRecentMessages, saveChatSummary, getExistingSummaries, storeChatMessage } = require('../utils/ai');
+const { callLLMFast } = require('../utils/llm');
+const { searchSimilarChunks, generateEmbedding } = require('../utils/embeddings');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -16,31 +18,31 @@ module.exports = {
         .setRequired(false))
       .addIntegerOption(o => 
         o.setName('hours')
-        .setDescription('Hours to look back (1-168, default: 24) - Cannot use with messages')
+        .setDescription('Hours to look back (1-730, default: 24) - Cannot use with messages')
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(168))
+        .setMaxValue(730))
       .addIntegerOption(o =>
         o.setName('messages')
-        .setDescription('Number of recent messages to summarize (10-1000) - Cannot use with hours')
+        .setDescription('Number of recent messages to summarize (10-10000) - Cannot use with hours')
         .setRequired(false)
         .setMinValue(10)
-        .setMaxValue(1000))) // Max 1000 messages
+        .setMaxValue(10000))) // Max 10000 messages
     .addSubcommand(sub => 
       sub.setName('server')
       .setDescription('Summarize messages from the entire server')
-      .addIntegerOption(o => 
+      .addIntegerOption(o =>
         o.setName('hours')
-        .setDescription('Hours to look back (1-168, default: 24) - Cannot use with messages')
+        .setDescription('Hours to look back (1-730, default: 24) - Cannot use with messages')
         .setRequired(false)
         .setMinValue(1)
-        .setMaxValue(168))
+        .setMaxValue(730))
       .addIntegerOption(o =>
         o.setName('messages')
-        .setDescription('Number of recent messages to summarize (10-1000) - Cannot use with hours')
+        .setDescription('Number of recent messages to summarize (10-10000) - Cannot use with hours')
         .setRequired(false)
         .setMinValue(10)
-        .setMaxValue(1000)))
+        .setMaxValue(10000)))
     .addSubcommand(sub => 
       sub.setName('history')
       .setDescription('View recent summaries')

@@ -1,5 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
-const { analyzeChannelMessages, getChannelMessages } = require('../utils/ai.js');
+const { analyzeChannelMessages, getRecentMessages } = require('../utils/ai.js');
+const { searchSimilarChunks, generateEmbedding } = require('../utils/embeddings.js');
+const db = require('../utils/db.js');
 const logger = require('../utils/logger.js');
 
 module.exports = {
@@ -131,14 +133,53 @@ module.exports = {
 
             const daysToAnalyze = days || defaultDays;
             const startTime = Date.now() - (daysToAnalyze * 24 * 60 * 60 * 1000);
+            const endTime = Date.now();
 
             // Update status
             await interaction.editReply({
                 content: `🔍 Analyzing ${analysisScope} (last ${daysToAnalyze} days)...\nThis may take a moment.`
             });
 
-            // Get messages from database
-            const messages = await getChannelMessages(guildId, channelId, startTime);
+            // Get messages from database using semantic search where available
+            let messages;
+            const queryText = `Analysis of ${analysisScope} discussions over the last ${daysToAnalyze} days`;
+
+            try {
+                // Try semantic search first
+                const queryEmbedding = await generateEmbedding(queryText);
+                const similarChunks = searchSimilarChunks(db, queryEmbedding, guildId, {
+                    channelId: channelId,
+                    startTs: startTime,
+                    endTs: endTime,
+                    topK: 50
+                });
+
+                if (similarChunks && similarChunks.length > 0) {
+                    // Convert chunks back to message format for analysis
+                    messages = similarChunks.flatMap(chunk => {
+                        const lines = chunk.combined_text.split('\n');
+                        return lines.map(line => {
+                            const match = line.match(/^([^:]+):\s*(.+)$/);
+                            if (match) {
+                                return {
+                                    username: match[1],
+                                    content: match[2],
+                                    timestamp: chunk.start_ts
+                                };
+                            }
+                            return null;
+                        }).filter(m => m !== null);
+                    });
+                    logger.info(`Semantic search found ${similarChunks.length} chunks for analysis`);
+                } else {
+                    // Fallback to time-based retrieval
+                    messages = getRecentMessages(db, guildId, channelId, daysToAnalyze * 24, null);
+                    logger.info(`Using time-based retrieval: ${messages.length} messages`);
+                }
+            } catch (error) {
+                logger.warn('Semantic search failed, falling back to time-based retrieval:', error);
+                messages = getRecentMessages(db, guildId, channelId, daysToAnalyze * 24, null);
+            }
 
             if (!messages || messages.length === 0) {
                 return interaction.editReply({
